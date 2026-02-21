@@ -1,0 +1,9 @@
+{
+  "buildCommand": "cd apps/miniapp && npm run build",
+  "outputDirectory": "apps/miniapp/dist",
+  "installCommand": "cd apps/miniapp && npm install",
+  "framework": "vite",
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}

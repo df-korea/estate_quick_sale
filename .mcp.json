@@ -1,9 +1,5 @@
 {
   "mcpServers": {
-    "apps-in-toss": {
-      "command": "ax",
-      "args": ["mcp", "start"]
-    },
     "vercel": {
       "command": "npx",
       "args": ["-y", "vercel-mcp@latest", "VERCEL_API_KEY=fEitYYL9RuAYCr4BGk0UBk54"]

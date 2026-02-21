@@ -1,0 +1,126 @@
+/* Toss Design Token Inspired */
+:root {
+  --color-black: #191F28;
+  --color-gray-900: #333D4B;
+  --color-gray-800: #4E5968;
+  --color-gray-700: #6B7684;
+  --color-gray-600: #8B95A1;
+  --color-gray-500: #B0B8C1;
+  --color-gray-400: #D1D6DB;
+  --color-gray-300: #E5E8EB;
+  --color-gray-200: #F2F4F6;
+  --color-gray-100: #F9FAFB;
+  --color-white: #FFFFFF;
+  --color-blue: #3182F6;
+  --color-blue-light: #E8F3FF;
+  --color-red: #F04452;
+  --color-red-light: #FFEBEE;
+  --color-green: #30B06E;
+  --color-green-light: #E8F5E9;
+  --color-orange: #F59E0B;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', Pretendard, Roboto, 'Noto Sans KR', sans-serif;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.12);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--font-sans);
+  color: var(--color-black);
+  background-color: var(--color-gray-100);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  line-height: 1.5;
+}
+
+a {
+  color: var(--color-blue);
+  text-decoration: none;
+}
+
+/* Safe area for mobile */
+.app-container {
+  max-width: 480px;
+  margin: 0 auto;
+  min-height: 100vh;
+  background: var(--color-white);
+  position: relative;
+  padding-bottom: 72px; /* tab bar height */
+}
+
+/* Header */
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: var(--color-white);
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--color-gray-300);
+}
+
+.header h1 {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--color-black);
+}
+
+/* Page content */
+.page-content {
+  padding: 16px 20px;
+}
+
+/* Loading spinner */
+.loading-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  gap: 12px;
+}
+
+.spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--color-gray-300);
+  border-top-color: var(--color-blue);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Empty state */
+.empty-state {
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--color-gray-700);
+}
+
+.empty-state p {
+  font-size: 15px;
+  margin-top: 8px;
+}
+
+/* Pull to refresh indicator */
+.pull-indicator {
+  text-align: center;
+  padding: 8px;
+  color: var(--color-gray-600);
+  font-size: 13px;
+}
