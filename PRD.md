@@ -203,28 +203,43 @@ ELSE
 
 ```
 ┌─ 토스 앱 ──────────────────────────────────────┐
-│  급매 알리미 미니앱 (React + TDS + WebView)       │
+│  급매 레이더 미니앱 (React + TDS + WebView)       │
 │  Bedrock SDK (로그인, 알림, 네비게이션)            │
 └────────────────────┬───────────────────────────┘
                      │ HTTPS
 ┌────────────────────▼───────────────────────────┐
-│  Supabase Backend                               │
+│  Oracle VM (한국 클라우드)                        │
 │                                                 │
-│  Edge Functions         PostgreSQL               │
-│  ├ collect-articles/    ├ complexes (단지)        │
-│  ├ collect-trades/      ├ articles (매물/호가)     │
-│  ├ detect-bargains/     ├ price_history (호가변동) │
-│  ├ send-alerts/         ├ transactions (실거래)    │
-│  └ api/ (REST)          ├ bargain_detections (급매감지)│
-│  pg_cron                ├ users                   │
-│  ├ 30분: Tier1 빠른체크  ├ watchlist (관심단지)     │
-│  ├ 6시간: Tier2 전체스캔  └ alert_history (알림이력) │
-│  └ 06:00: Tier3 실거래                            │
-└───────┬──────────────────────┬─────────────────┘
+│  PostgreSQL DB (168.107.44.148:8081)             │
+│  ├ complexes (단지)      ├ users                 │
+│  ├ articles (매물/호가)   ├ watchlist (관심단지)   │
+│  ├ price_history (변동)   ├ alert_history (알림)   │
+│  ├ real_transactions     ├ bargain_detections    │
+│  └ collection_runs                               │
+│                                                 │
+│  Express API 서버 (:3001)                        │
+│  ├ /api/bargains          ├ /api/real-transactions│
+│  ├ /api/articles          ├ /api/stats           │
+│  └ /api/complexes                                │
+└───────────────────────────────────────────────┘
+                     ▲ DB 원격 접속 (PGHOST)
+┌────────────────────┴───────────────────────────┐
+│  로컬 맥 (수집 전용)                              │
+│                                                 │
+│  수집 스크립트 (가정용 IP 필수)                     │
+│  ├ poll-new-articles.mjs    (Tier1, 1~2시간 주기) │
+│  ├ collect-articles.mjs     (Tier2, 1일 1회)     │
+│  ├ collect-real-transactions.mjs (Tier3, 1일 1회)│
+│  └ discover-complexes.mjs   (단지 발굴, 필요 시)  │
+│                                                 │
+│  .command 파일 (macOS 더블클릭 실행)               │
+└───────┬──────────────────────┬────────────────┘
         ▼                      ▼
   네이버 부동산 API         국토부 실거래 API
   (비공식, 호가)           (공식, 무료)
 ```
+
+**제약사항:** 네이버가 클라우드/데이터센터 IP (Oracle Cloud, AWS, Supabase, Vercel 등)를 차단하므로, 수집 스크립트는 **반드시 가정용 IP(로컬 맥)에서 실행**해야 함. 서버에서는 DB + API 서비스만 운영.
 
 ### 기술 스택
 
@@ -234,9 +249,9 @@ ELSE
 | UI | TDS Mobile | 토스 앱과 일관된 UX, 필수 사항 |
 | State | Zustand + TanStack Query | 경량 + 서버 상태 캐싱 |
 | Chart | Recharts | 실거래가 추이 차트 |
-| Backend | Supabase Edge Functions (Deno) | 서버리스, PostgreSQL 통합 |
-| DB | PostgreSQL (Supabase) | 시계열 + 관계형 |
-| Scheduler | pg_cron | Supabase 네이티브 |
+| API 서버 | Express (Node.js) on Oracle VM | 한국 IP 필수 (네이버 차단 대응) |
+| DB | PostgreSQL (Oracle VM, 168.107.44.148:8081) | 시계열 + 관계형 |
+| 수집 | Node.js 스크립트 (로컬 맥에서 실행) | 가정용 IP 필수 |
 | Auth | 토스 로그인 (OAuth 2.0) + Supabase Auth | 토스 앱 연동 필수 |
 | Push | 토스 스마트 발송 API | 세그먼트 기반 타겟팅 |
 
