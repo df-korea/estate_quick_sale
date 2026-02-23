@@ -17,13 +17,11 @@
  * 예상 호출: 250시군구 × 12월 = 3,000건 + 페이지네이션 ~500건 = ~3,500건
  */
 
-import pg from 'pg';
+import { pool } from './db.mjs';
 import { parseArgs } from 'node:util';
 import fs from 'node:fs';
 import path from 'node:path';
 import { XMLParser } from 'fast-xml-parser';
-
-const { Pool } = pg;
 
 // ============================================
 // 설정
@@ -61,17 +59,6 @@ const PROGRESS_FILE = 'logs/real-tx-progress.json';
 const SGG_CODES = JSON.parse(
   fs.readFileSync(path.join(import.meta.dirname, 'data/sgg-codes.json'), 'utf8')
 );
-
-// ============================================
-// DB
-// ============================================
-
-const pool = new Pool({
-  host: 'localhost',
-  port: 5432,
-  database: 'estate_quick_sale',
-  user: process.env.USER,
-});
 
 // ============================================
 // XML 파서

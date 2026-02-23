@@ -1,39 +1,27 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { HomePage } from './pages/HomePage';
-import { ArticleDetailPage } from './pages/ArticleDetailPage';
-import { SearchPage } from './pages/SearchPage';
-import { ComplexDetailPage } from './pages/ComplexDetailPage';
-import { SettingsPage } from './pages/SettingsPage';
-import { TabBar } from './components/TabBar';
 import './styles/global.css';
+import TabBar from './components/TabBar';
+import HomePage from './pages/HomePage';
+import SearchPage from './pages/SearchPage';
+import WatchlistPage from './pages/WatchlistPage';
+import SettingsPage from './pages/SettingsPage';
+import ArticleDetailPage from './pages/ArticleDetailPage';
+import ComplexDetailPage from './pages/ComplexDetailPage';
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      retry: 1,
-      refetchOnWindowFocus: false,
-    },
-  },
-});
-
-function App() {
+export default function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <div className="app-container">
-          <Routes>
-            <Route path="/" element={<HomePage />} />
-            <Route path="/article/:id" element={<ArticleDetailPage />} />
-            <Route path="/complex/:id" element={<ComplexDetailPage />} />
-            <Route path="/search" element={<SearchPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
-          </Routes>
-          <TabBar />
-        </div>
-      </BrowserRouter>
-    </QueryClientProvider>
+    <BrowserRouter>
+      <div className="mobile-frame">
+        <Routes>
+          <Route path="/" element={<HomePage />} />
+          <Route path="/search" element={<SearchPage />} />
+          <Route path="/watchlist" element={<WatchlistPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/article/:id" element={<ArticleDetailPage />} />
+          <Route path="/complex/:id" element={<ComplexDetailPage />} />
+        </Routes>
+        <TabBar />
+      </div>
+    </BrowserRouter>
   );
 }
-
-export default App;

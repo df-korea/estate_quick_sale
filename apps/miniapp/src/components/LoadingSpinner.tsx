@@ -1,12 +1,19 @@
-interface LoadingSpinnerProps {
-  message?: string;
-}
+import type { CSSProperties } from 'react';
 
-export function LoadingSpinner({ message = '불러오는 중...' }: LoadingSpinnerProps) {
+const spinner: CSSProperties = {
+  width: 28,
+  height: 28,
+  border: '3px solid var(--gray-200)',
+  borderTopColor: 'var(--blue-500)',
+  borderRadius: '50%',
+  animation: 'spin 0.8s linear infinite',
+};
+
+export default function LoadingSpinner() {
   return (
-    <div className="loading-container">
-      <div className="spinner" />
-      <span style={{ fontSize: '14px', color: 'var(--color-gray-700)' }}>{message}</span>
+    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', padding: 40 }}>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      <div style={spinner} />
     </div>
   );
 }

@@ -1,133 +1,92 @@
-import React from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { apiFetch } from '../lib/api';
+import { useStats } from '../hooks/useStats';
+import LoadingSpinner from '../components/LoadingSpinner';
 
-interface Stats {
-  complexCount: number;
-  articleCount: number;
-  bargainCount: number;
-  removedCount: number;
-  lastCollectionAt: string | null;
-  recentRuns: any[];
-}
+export default function SettingsPage() {
+  const { data: stats, loading } = useStats();
 
-export function SettingsPage() {
-  const { data: stats } = useQuery({
-    queryKey: ['stats'],
-    queryFn: () => apiFetch<Stats>('/stats'),
-    staleTime: 30_000,
-  });
-
-  const sectionStyle: React.CSSProperties = {
-    padding: '16px 0',
-    borderBottom: '1px solid var(--color-gray-200)',
-  };
-
-  const titleStyle: React.CSSProperties = {
-    fontSize: '14px',
-    fontWeight: 600,
-    color: 'var(--color-gray-800)',
-    marginBottom: '12px',
-  };
+  if (loading) return <div className="page"><LoadingSpinner /></div>;
 
   return (
-    <div>
-      <div className="header">
+    <div className="page">
+      <div className="page-header">
         <h1>설정</h1>
       </div>
-
       <div className="page-content">
         {/* Data Stats */}
-        <div style={sectionStyle}>
-          <div style={titleStyle}>데이터 현황</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '12px' }}>
-            <StatBox label="단지" value={stats?.complexCount || 0} />
-            <StatBox label="매물" value={stats?.articleCount || 0} />
-            <StatBox label="급매" value={stats?.bargainCount || 0} color="var(--color-red)" />
-            <StatBox label="삭제됨" value={stats?.removedCount || 0} color="var(--color-gray-500)" />
-          </div>
-        </div>
-
-        {/* Recent Runs */}
-        <div style={sectionStyle}>
-          <div style={titleStyle}>최근 수집 이력</div>
-          {stats?.recentRuns.map((run: any) => (
-            <div key={run.id} style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              padding: '8px 0',
-              fontSize: '13px',
-              borderBottom: '1px solid var(--color-gray-100)',
-            }}>
-              <div>
-                <span style={{
-                  padding: '2px 6px',
-                  borderRadius: '4px',
-                  background: run.status === 'completed' ? 'var(--color-green-light)' : 'var(--color-gray-200)',
-                  color: run.status === 'completed' ? 'var(--color-green)' : 'var(--color-gray-700)',
-                  fontSize: '11px',
-                  fontWeight: 600,
-                  marginRight: '8px',
-                }}>
-                  {run.run_type}
-                </span>
-                <span style={{ color: 'var(--color-gray-600)' }}>
-                  {run.new_articles || 0}건 신규 / {run.new_bargains || 0}건 급매{run.removed_articles ? ` / ${run.removed_articles}건 제거` : ''}
-                </span>
+        <div className="section">
+          <h3 style={{ fontWeight: 700, marginBottom: 'var(--space-12)' }}>데이터 현황</h3>
+          <div className="card">
+            <div className="card-body">
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-12)' }}>
+                <StatItem label="단지" value={stats?.complexCount?.toLocaleString() ?? '-'} />
+                <StatItem label="활성 매물" value={stats?.articleCount?.toLocaleString() ?? '-'} />
+                <StatItem label="급매" value={stats?.bargainCount?.toLocaleString() ?? '-'} color="var(--red-500)" />
+                <StatItem label="삭제된 매물" value={stats?.removedCount?.toLocaleString() ?? '-'} />
+                <StatItem label="실거래" value={stats?.realTransactionCount?.toLocaleString() ?? '-'} />
               </div>
-              <span style={{ color: 'var(--color-gray-500)' }}>
-                {new Date(run.started_at).toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-              </span>
             </div>
-          ))}
-          {(!stats?.recentRuns || stats.recentRuns.length === 0) && (
-            <div style={{ fontSize: '13px', color: 'var(--color-gray-600)' }}>수집 이력이 없습니다.</div>
-          )}
-        </div>
-
-        {/* Notification settings stub */}
-        <div style={sectionStyle}>
-          <div style={titleStyle}>알림 설정</div>
-          <div style={{
-            padding: '16px',
-            borderRadius: 'var(--radius-md)',
-            background: 'var(--color-gray-100)',
-            textAlign: 'center',
-            color: 'var(--color-gray-600)',
-            fontSize: '13px',
-          }}>
-            토스 앱 연동 후 사용 가능합니다
           </div>
         </div>
 
-        {/* About */}
-        <div style={{ padding: '16px 0', textAlign: 'center' }}>
-          <p style={{ fontSize: '12px', color: 'var(--color-gray-500)' }}>
-            부동산 급매 레이더 v0.1.0
-          </p>
-          <p style={{ fontSize: '11px', color: 'var(--color-gray-400)', marginTop: '4px' }}>
-            데이터 출처: 네이버 부동산
-          </p>
+        {/* Last Collection */}
+        <div className="section">
+          <h3 style={{ fontWeight: 700, marginBottom: 'var(--space-12)' }}>최근 수집</h3>
+          <div className="card">
+            <div className="card-body">
+              {stats?.lastCollectionAt ? (
+                <div className="text-sm">
+                  마지막 수집: {new Date(stats.lastCollectionAt).toLocaleString('ko-KR')}
+                </div>
+              ) : (
+                <div className="text-sm text-gray">수집 이력 없음</div>
+              )}
+
+              {stats?.recentRuns && stats.recentRuns.length > 0 && (
+                <div style={{ marginTop: 'var(--space-12)' }}>
+                  <div className="text-xs text-gray" style={{ marginBottom: 'var(--space-8)' }}>최근 실행</div>
+                  {stats.recentRuns.map((run, i) => (
+                    <div key={i} className="flex items-center justify-between"
+                      style={{ padding: 'var(--space-6) 0', borderBottom: i < stats.recentRuns.length - 1 ? '1px solid var(--border)' : 'none' }}>
+                      <div>
+                        <span className={`badge ${run.status === 'completed' ? 'badge--green' : run.status === 'running' ? 'badge--blue' : 'badge--red'}`}>
+                          {run.mode || 'full'}
+                        </span>
+                        <span className="text-xs text-gray" style={{ marginLeft: 8 }}>
+                          {run.started_at ? new Date(run.started_at).toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
+                        </span>
+                      </div>
+                      <div className="text-xs text-gray">
+                        {run.articles_upserted != null && `+${run.articles_upserted}`}
+                        {run.articles_removed != null && ` -${run.articles_removed}`}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* App Info */}
+        <div className="section">
+          <h3 style={{ fontWeight: 700, marginBottom: 'var(--space-12)' }}>앱 정보</h3>
+          <div className="card">
+            <div className="card-body text-sm text-gray">
+              <p>급매 레이더 v0.1</p>
+              <p style={{ marginTop: 4 }}>부동산 급매물 모니터링 서비스</p>
+            </div>
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-function StatBox({ label, value, color }: { label: string; value: number; color?: string }) {
+function StatItem({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
-    <div style={{
-      textAlign: 'center',
-      padding: '12px',
-      borderRadius: 'var(--radius-sm)',
-      background: 'var(--color-gray-100)',
-    }}>
-      <div style={{ fontSize: '20px', fontWeight: 700, color: color || 'var(--color-black)' }}>
-        {value.toLocaleString()}
-      </div>
-      <div style={{ fontSize: '12px', color: 'var(--color-gray-600)', marginTop: '2px' }}>
-        {label}
-      </div>
+    <div>
+      <div className="text-xs text-gray">{label}</div>
+      <div style={{ fontWeight: 700, fontSize: 'var(--text-xl)', color }}>{value}</div>
     </div>
   );
 }

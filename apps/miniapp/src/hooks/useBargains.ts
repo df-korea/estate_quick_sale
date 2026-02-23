@@ -1,46 +1,57 @@
-import { useQuery } from '@tanstack/react-query';
+import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '../lib/api';
-
-export interface BargainArticle {
-  id: number;
-  atcl_no: string;
-  complex_id: number;
-  trade_type: string;
-  price_text: string | null;
-  price_amount: number | null;
-  warrant_price_text: string | null;
-  rent_price_text: string | null;
-  area_exclusive: number | null;
-  floor_info: string | null;
-  direction: string | null;
-  description: string | null;
-  building_name: string | null;
-  rep_image_url: string | null;
-  realtor_name: string | null;
-  bargain_keyword: string | null;
-  first_seen_at: string;
-  tag_list: string[] | null;
-  // Joined from complexes
-  complex_name: string;
-  property_type: string;
-  hscp_no: string;
-}
+import type { BargainArticle, BargainSort } from '../types';
 
 export function useBargains(limit = 50) {
-  return useQuery({
-    queryKey: ['bargains', limit],
-    queryFn: () => apiFetch<BargainArticle[]>(`/bargains?limit=${limit}`),
-    staleTime: 60_000,
-  });
+  const [data, setData] = useState<BargainArticle[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetch = useCallback(async () => {
+    setLoading(true);
+    try {
+      setData(await apiFetch<BargainArticle[]>(`/bargains?limit=${limit}`));
+    } catch { /* ignore */ }
+    setLoading(false);
+  }, [limit]);
+
+  useEffect(() => { fetch(); }, [fetch]);
+
+  return { data, loading, refetch: fetch };
 }
 
 export function useBargainCount() {
-  return useQuery({
-    queryKey: ['bargainCount'],
-    queryFn: async () => {
-      const data = await apiFetch<{ count: number }>('/bargains/count');
-      return data.count;
-    },
-    staleTime: 60_000,
-  });
+  const [count, setCount] = useState<number | null>(null);
+
+  useEffect(() => {
+    apiFetch<{ count: number }>('/bargains/count').then(r => setCount(r.count)).catch(() => {});
+  }, []);
+
+  return count;
+}
+
+interface FilteredParams {
+  sort?: BargainSort;
+  district?: string;
+  limit?: number;
+}
+
+export function useFilteredBargains(params: FilteredParams) {
+  const [data, setData] = useState<BargainArticle[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetch = useCallback(async () => {
+    setLoading(true);
+    const qs = new URLSearchParams();
+    if (params.sort) qs.set('sort', params.sort);
+    if (params.district) qs.set('district', params.district);
+    if (params.limit) qs.set('limit', String(params.limit));
+    try {
+      setData(await apiFetch<BargainArticle[]>(`/bargains/filtered?${qs}`));
+    } catch { /* ignore */ }
+    setLoading(false);
+  }, [params.sort, params.district, params.limit]);
+
+  useEffect(() => { fetch(); }, [fetch]);
+
+  return { data, loading, refetch: fetch };
 }

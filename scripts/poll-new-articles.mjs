@@ -3,34 +3,40 @@
  * poll-new-articles.mjs  —  신규 매물 빠른 감지
  *
  * 동작:
- *   [1단계] 전국 격자 타일별 articleList?sort=dates 조회 (~700 API, ~15분)
+ *   [1단계] 활성 타일만 articleList?sort=dates 조회 (~20분)
  *           → DB에 없는 atclNo 발견 시 해당 단지명 기록
+ *           → 매물 있던 타일 캐시 저장 (다음 실행에서 빈 타일 스킵)
  *   [2단계] 변동 감지된 단지만 deep scan (collectComplex 로직)
  *           → 호가 변동, 급매 감지, 사라진 매물 제거 포함
  *
  * Usage:
- *   node scripts/poll-new-articles.mjs              # 전체 폴링
- *   node scripts/poll-new-articles.mjs --scan-only   # 1단계만 (감지만, deep scan 안함)
- *   node scripts/poll-new-articles.mjs --region 서울  # 특정 지역만
+ *   node scripts/poll-new-articles.mjs                # 타일 스캔 + deep scan (신규 + 순환 300개)
+ *   node scripts/poll-new-articles.mjs --full-scan    # 전체 타일 스캔 (캐시 갱신)
+ *   node scripts/poll-new-articles.mjs --scan-only    # 1단계만 (감지만, deep scan 안함)
+ *   node scripts/poll-new-articles.mjs --deep-only    # 타일 스캔 스킵, 순환 deep scan만
+ *   node scripts/poll-new-articles.mjs --rotate 500   # 순환 단지 수 변경 (기본 300)
+ *   node scripts/poll-new-articles.mjs --region 서울   # 특정 지역만
  */
 
-import pg from 'pg';
+import { pool } from './db.mjs';
 import { parseArgs } from 'node:util';
-
-const { Pool } = pg;
-const pool = new Pool({
-  host: 'localhost', port: 5432, database: 'estate_quick_sale', user: process.env.USER, max: 5,
-});
+import fs from 'node:fs';
+import path from 'node:path';
 
 // ── Args ──
 
 const { values: cliArgs } = parseArgs({
   options: {
     'scan-only': { type: 'boolean', default: false },
+    'full-scan': { type: 'boolean', default: false },
+    'deep-only': { type: 'boolean', default: false },
+    'rotate': { type: 'string', default: '300' },
     region: { type: 'string', default: '' },
   },
   strict: false,
 });
+
+const ACTIVE_TILES_FILE = path.join(import.meta.dirname, 'data/active-tiles.json');
 
 // ── 설정 ──
 
@@ -61,10 +67,10 @@ const REGIONS = [
 
 // ── 적응형 딜레이 + 서킷브레이커 ──
 
-const REQUEST_DELAY = 3000;
+const REQUEST_DELAY = 2000;
 const MAX_DELAY = 10000;
-const BATCH_SIZE = 25;
-const BATCH_REST = 35000;
+const BATCH_SIZE = 30;
+const BATCH_REST = 25000;
 
 let currentDelay = REQUEST_DELAY;
 let consecutive307 = 0;
@@ -146,6 +152,44 @@ function detectBargain(desc, tags) {
   return { found: false, keyword: '', source: '' };
 }
 
+// ── 타일 생성/캐시 ──
+
+function generateAllTiles(regions) {
+  const tiles = [];
+  for (const region of regions) {
+    const { step } = region;
+    for (let lat = region.latMin; lat < region.latMax; lat += step) {
+      for (let lon = region.lonMin; lon < region.lonMax; lon += step) {
+        tiles.push({ lat: parseFloat(lat.toFixed(4)), lon: parseFloat(lon.toFixed(4)), step, region: region.name });
+      }
+    }
+  }
+  return tiles;
+}
+
+function loadActiveTiles() {
+  try {
+    if (fs.existsSync(ACTIVE_TILES_FILE)) {
+      const data = JSON.parse(fs.readFileSync(ACTIVE_TILES_FILE, 'utf8'));
+      const age = (Date.now() - new Date(data.updated).getTime()) / (1000 * 60 * 60 * 24);
+      if (age > 7) {
+        console.log(`  ⚠ 캐시가 ${age.toFixed(0)}일 전 — --full-scan 권장`);
+      }
+      return data.tiles;
+    }
+  } catch {}
+  return null;
+}
+
+function saveActiveTiles(activeTiles) {
+  fs.mkdirSync(path.dirname(ACTIVE_TILES_FILE), { recursive: true });
+  fs.writeFileSync(ACTIVE_TILES_FILE, JSON.stringify({
+    updated: new Date().toISOString(),
+    totalTiles: activeTiles.length,
+    tiles: activeTiles,
+  }, null, 2));
+}
+
 // ── [1단계] 타일별 신규 매물 감지 ──
 
 async function fetchArticleList(lat, lon, step, page) {
@@ -174,7 +218,7 @@ async function fetchArticleList(lat, lon, step, page) {
   return { body: [], more: false };
 }
 
-async function scanForNewArticles(regions) {
+async function scanForNewArticles(tiles, isFullScan) {
   console.log(`\n📡 [1단계] 타일별 신규 매물 감지 (sort=dates)...`);
   const startTime = Date.now();
 
@@ -191,83 +235,97 @@ async function scanForNewArticles(regions) {
   const existingAtclNos = new Set(existingRows.map(r => r.atcl_no));
   console.log(`  DB active 매물: ${existingAtclNos.size}개`);
 
-  // 전체 타일 수 미리 계산
-  let expectedTiles = 0;
-  for (const r of regions) {
-    expectedTiles += Math.ceil((r.latMax - r.latMin) / r.step) * Math.ceil((r.lonMax - r.lonMin) / r.step);
-  }
-
+  const expectedTiles = tiles.length;
   let totalTiles = 0, tilesWithNew = 0;
   const changedComplexNames = new Map(); // complexName → Set<atclNo>
   const newArticlesData = [];            // 새 매물 raw data
+  const activeTilesFound = [];           // 매물 있는 타일 (캐시용)
+  let currentRegion = '';
 
-  for (const region of regions) {
-    const { step } = region;
-    let regionTiles = 0, regionNew = 0;
-
-    for (let lat = region.latMin; lat < region.latMax; lat += step) {
-      for (let lon = region.lonMin; lon < region.lonMax; lon += step) {
-        await maybeBatchRest();
-
-        let page = 1;
-        let tileHasNew = false;
-        let foundKnown = false;
-
-        // 페이지를 넘기면서 새 매물이 없을 때까지 (또는 이미 본 매물이 나올 때까지)
-        while (!foundKnown && page <= 3) {
-          const { body, more } = await fetchArticleList(lat, lon, step, page);
-          if (body.length === 0) break;
-
-          for (const art of body) {
-            if (!art.atclNo) continue;
-            const atclNo = art.atclNo;
-
-            // atclNo 기반 빠른 체크: DB max보다 작거나 같으면 이미 알려진 매물
-            if (parseInt(atclNo) <= max_atcl || existingAtclNos.has(atclNo)) {
-              foundKnown = true;
-              break;
-            }
-
-            // 새 매물!
-            tileHasNew = true;
-            regionNew++;
-            const complexName = art.atclNm || 'Unknown';
-
-            if (!changedComplexNames.has(complexName)) {
-              changedComplexNames.set(complexName, new Set());
-            }
-            changedComplexNames.get(complexName).add(atclNo);
-            newArticlesData.push(art);
-          }
-
-          if (!more || foundKnown) break;
-          page++;
-          await sleep(getDelay());
-        }
-
-        if (tileHasNew) tilesWithNew++;
-        totalTiles++;
-        regionTiles++;
-
-        // 매 20타일마다 진행 로그
-        if (totalTiles % 20 === 0) {
-          const elapsed = ((Date.now() - startTime) / 60000).toFixed(1);
-          const pct = ((totalTiles / expectedTiles) * 100).toFixed(0);
-          process.stdout.write(`  [${pct}% ${totalTiles}/${expectedTiles}타일 ${elapsed}분] 신규 ${newArticlesData.length}건 ${changedComplexNames.size}단지\n`);
-        }
-
-        await sleep(getDelay());
+  for (const tile of tiles) {
+    // 지역 변경 시 로그
+    if (tile.region !== currentRegion) {
+      if (currentRegion) {
+        const elapsed = ((Date.now() - startTime) / 60000).toFixed(1);
+        console.log(`  ✅ [${currentRegion}] (${elapsed}분)`);
       }
+      currentRegion = tile.region;
     }
 
+    await maybeBatchRest();
+
+    let page = 1;
+    let tileHasNew = false;
+    let tileHasArticles = false;
+    let foundKnown = false;
+
+    // 페이지를 넘기면서 새 매물이 없을 때까지 (또는 이미 본 매물이 나올 때까지)
+    while (!foundKnown && page <= 3) {
+      const { body, more } = await fetchArticleList(tile.lat, tile.lon, tile.step, page);
+      if (body.length === 0) break;
+
+      tileHasArticles = true;
+
+      for (const art of body) {
+        if (!art.atclNo) continue;
+        const atclNo = art.atclNo;
+
+        // atclNo 기반 빠른 체크: DB max보다 작거나 같으면 이미 알려진 매물
+        if (parseInt(atclNo) <= max_atcl || existingAtclNos.has(atclNo)) {
+          foundKnown = true;
+          break;
+        }
+
+        // 새 매물!
+        tileHasNew = true;
+        const complexName = art.atclNm || 'Unknown';
+
+        if (!changedComplexNames.has(complexName)) {
+          changedComplexNames.set(complexName, new Set());
+        }
+        changedComplexNames.get(complexName).add(atclNo);
+        newArticlesData.push(art);
+      }
+
+      if (!more || foundKnown) break;
+      page++;
+      await sleep(getDelay());
+    }
+
+    // 매물 있는 타일 기록 (캐시용)
+    if (tileHasArticles) {
+      activeTilesFound.push(tile);
+    }
+
+    if (tileHasNew) tilesWithNew++;
+    totalTiles++;
+
+    // 매 30타일마다 진행 로그
+    if (totalTiles % 30 === 0) {
+      const elapsed = ((Date.now() - startTime) / 60000).toFixed(1);
+      const pct = ((totalTiles / expectedTiles) * 100).toFixed(0);
+      process.stdout.write(`  [${pct}% ${totalTiles}/${expectedTiles}타일 ${elapsed}분] 신규 ${newArticlesData.length}건 ${changedComplexNames.size}단지\n`);
+    }
+
+    await sleep(getDelay());
+  }
+
+  // 마지막 지역 로그
+  if (currentRegion) {
     const elapsed = ((Date.now() - startTime) / 60000).toFixed(1);
-    console.log(`  ✅ [${region.name}] ${regionTiles}타일, 신규 ${regionNew}건 (${elapsed}분)`);
+    console.log(`  ✅ [${currentRegion}] (${elapsed}분)`);
   }
 
   const elapsed = ((Date.now() - startTime) / 60000).toFixed(1);
-  console.log(`\n  ✅ 스캔 완료: ${totalTiles}타일, ${tilesWithNew}개 타일에서 변동`);
+  console.log(`\n  ✅ 스캔 완료: ${totalTiles}타일 (활성 ${activeTilesFound.length}개), ${tilesWithNew}개 타일에서 변동`);
   console.log(`     신규 매물: ${newArticlesData.length}건, ${changedComplexNames.size}개 단지`);
   console.log(`     소요: ${elapsed}분, API: ${totalRequests}건 (307: ${total307}건)`);
+
+  // 풀스캔이면 활성 타일 캐시 저장
+  if (isFullScan && activeTilesFound.length > 0) {
+    saveActiveTiles(activeTilesFound);
+    console.log(`  💾 활성 타일 캐시 저장: ${activeTilesFound.length}개 (${ACTIVE_TILES_FILE})`);
+  }
 
   return { changedComplexNames, newArticlesData };
 }
@@ -460,33 +518,69 @@ async function collectComplex(complexId, hscpNo) {
   return result;
 }
 
-async function deepScanChangedComplexes(changedComplexNames) {
-  console.log(`\n🏗 [2단계] 변동 단지 deep scan...`);
+async function deepScanChangedComplexes(changedComplexNames, rotateCount = 300) {
+  console.log(`\n🏗 [2단계] deep scan...`);
 
-  // 단지명 → complex_id, hscp_no 매핑
+  // ── 2A: 신규 감지 단지 ──
+  let newComplexes = [];
+  const scannedIds = new Set();
+
   const names = [...changedComplexNames.keys()];
-  if (names.length === 0) return;
+  if (names.length > 0) {
+    const placeholders = names.map((_, i) => `$${i + 1}`).join(',');
+    const { rows } = await pool.query(
+      `SELECT id, hscp_no, complex_name, deal_count FROM complexes
+       WHERE complex_name IN (${placeholders}) AND is_active = true
+       ORDER BY id`,
+      names
+    );
+    newComplexes = rows;
+    rows.forEach(c => scannedIds.add(c.id));
 
-  const placeholders = names.map((_, i) => `$${i + 1}`).join(',');
-  const { rows: complexes } = await pool.query(
-    `SELECT id, hscp_no, complex_name, deal_count FROM complexes
-     WHERE complex_name IN (${placeholders}) AND is_active = true
-     ORDER BY id`,
-    names
-  );
+    console.log(`  [2A] 신규 감지: ${names.length}개 단지명 → ${rows.length}개 DB 매핑`);
 
-  console.log(`  매핑: ${names.length}개 단지명 → ${complexes.length}개 DB 단지`);
-
-  // 매핑 안 되는 단지 로그
-  const mappedNames = new Set(complexes.map(c => c.complex_name));
-  const unmapped = names.filter(n => !mappedNames.has(n));
-  if (unmapped.length > 0) {
-    console.log(`  ⚠ 매핑 실패 ${unmapped.length}건: ${unmapped.slice(0, 5).join(', ')}${unmapped.length > 5 ? '...' : ''}`);
+    const mappedNames = new Set(rows.map(c => c.complex_name));
+    const unmapped = names.filter(n => !mappedNames.has(n));
+    if (unmapped.length > 0) {
+      console.log(`       매핑 실패 ${unmapped.length}건: ${unmapped.slice(0, 5).join(', ')}${unmapped.length > 5 ? '...' : ''}`);
+    }
   }
+
+  // ── 2B: 순환 단지 (24시간 이상 미수집, 수도권 우선) ──
+  let rotateComplexes = [];
+  if (rotateCount > 0) {
+    const excludeIds = scannedIds.size > 0 ? [...scannedIds] : [0];
+    const excludePlaceholders = excludeIds.map((_, i) => `$${i + 1}`).join(',');
+
+    const { rows } = await pool.query(`
+      SELECT id, hscp_no, complex_name, deal_count, sido FROM complexes
+      WHERE is_active = true
+        AND id NOT IN (${excludePlaceholders})
+        AND (last_collected_at IS NULL OR last_collected_at < NOW() - INTERVAL '24 hours')
+      ORDER BY
+        CASE WHEN sido IN ('서울','경기','인천') THEN 0 ELSE 1 END,
+        last_collected_at ASC NULLS FIRST
+      LIMIT $${excludeIds.length + 1}
+    `, [...excludeIds, rotateCount]);
+
+    rotateComplexes = rows;
+    const metroCount = rows.filter(c => ['서울','경기','인천'].includes(c.sido)).length;
+    console.log(`  [2B] 순환: ${rows.length}개 단지 (수도권 ${metroCount}개 우선)`);
+  }
+
+  // ── 합치기 ──
+  const allComplexes = [...newComplexes, ...rotateComplexes];
+  if (allComplexes.length === 0) {
+    console.log(`  스캔할 단지 없음`);
+    return;
+  }
+
+  const totalCount = allComplexes.length;
+  console.log(`  합계: ${totalCount}개 단지 (신규 ${newComplexes.length} + 순환 ${rotateComplexes.length})`);
 
   const { rows: [run] } = await pool.query(
     `INSERT INTO collection_runs (run_type, status, total_complexes) VALUES ('poll', 'running', $1) RETURNING id`,
-    [complexes.length]
+    [totalCount]
   );
   const runId = run.id;
 
@@ -494,15 +588,16 @@ async function deepScanChangedComplexes(changedComplexNames) {
   let totalFound = 0, totalNew = 0, totalUpdated = 0, totalBargains = 0;
   let totalPriceChanges = 0, totalRemoved = 0, totalErrors = 0, skippedCount = 0;
 
-  for (let i = 0; i < complexes.length; i++) {
-    const c = complexes[i];
+  for (let i = 0; i < allComplexes.length; i++) {
+    const c = allComplexes[i];
     const elapsed = ((Date.now() - startTime) / 60000).toFixed(1);
-    const pct = ((i / complexes.length) * 100).toFixed(1);
+    const pct = ((i / totalCount) * 100).toFixed(1);
+    const isNew = i < newComplexes.length;
+    const label = isNew
+      ? `${c.complex_name} (+${changedComplexNames.get(c.complex_name)?.size || '?'}신규)`
+      : `${c.complex_name} [순환${c.sido ? ' ' + c.sido : ''}]`;
 
-    const newAtclCount = changedComplexNames.get(c.complex_name)?.size || '?';
-    process.stdout.write(
-      `[${pct}% ${elapsed}m] ${c.complex_name} (+${newAtclCount}신규) `
-    );
+    process.stdout.write(`[${pct}% ${elapsed}m] ${label} `);
 
     const r = await collectComplex(c.id, c.hscp_no);
 
@@ -544,8 +639,8 @@ async function deepScanChangedComplexes(changedComplexNames) {
       new_articles=$3, updated_articles=$4, new_bargains=$5, removed_articles=$6, errors=$7, completed_at=NOW()
     WHERE id=$8
   `, [
-    totalErrors > complexes.length / 2 ? 'partial' : 'completed',
-    complexes.length, totalNew, totalUpdated, totalBargains, totalRemoved, totalErrors, runId,
+    totalErrors > totalCount / 2 ? 'partial' : 'completed',
+    totalCount, totalNew, totalUpdated, totalBargains, totalRemoved, totalErrors, runId,
   ]);
 
   const deepElapsed = ((Date.now() - startTime) / 60000).toFixed(1);
@@ -559,7 +654,22 @@ async function deepScanChangedComplexes(changedComplexNames) {
 
 async function main() {
   const scanOnly = cliArgs['scan-only'];
+  const fullScan = cliArgs['full-scan'];
+  const deepOnly = cliArgs['deep-only'];
+  const rotateCount = parseInt(cliArgs.rotate) || 300;
   const regionFilter = cliArgs.region || null;
+
+  const globalStart = Date.now();
+
+  // ── --deep-only: 1단계 스킵, 순환 deep scan만 실행 ──
+  if (deepOnly) {
+    console.log(`\n🏗 Deep scan only 모드 (순환 ${rotateCount}개, 수도권 우선)`);
+    await deepScanChangedComplexes(new Map(), rotateCount);
+    const totalElapsed = ((Date.now() - globalStart) / 60000).toFixed(1);
+    console.log(`\n✅ 완료! 총 소요: ${totalElapsed}분 | API: ${totalRequests}건 (307: ${total307}건)\n`);
+    await pool.end();
+    return;
+  }
 
   const targetRegions = regionFilter
     ? REGIONS.filter(r => r.name.includes(regionFilter))
@@ -571,24 +681,36 @@ async function main() {
     process.exit(1);
   }
 
-  let totalTiles = 0;
-  for (const r of targetRegions) {
-    const latSteps = Math.ceil((r.latMax - r.latMin) / r.step);
-    const lonSteps = Math.ceil((r.lonMax - r.lonMin) / r.step);
-    totalTiles += latSteps * lonSteps;
+  // 타일 리스트 결정: 캐시 or 전체
+  let tiles;
+  let isFullScan = fullScan || !!regionFilter;
+
+  if (!isFullScan) {
+    const cached = loadActiveTiles();
+    if (cached && cached.length > 0) {
+      tiles = regionFilter
+        ? cached.filter(t => t.region.includes(regionFilter))
+        : cached;
+      console.log(`\n🔔 신규 매물 폴링 (캐시 모드)`);
+      console.log(`   활성 타일: ${tiles.length}개 (전체 스캔 시 --full-scan)`);
+    } else {
+      console.log(`\n🔔 첫 실행 — 전체 스캔으로 활성 타일 캐시 생성`);
+      tiles = generateAllTiles(targetRegions);
+      isFullScan = true;
+    }
+  } else {
+    tiles = generateAllTiles(targetRegions);
+    console.log(`\n🔔 신규 매물 폴링 (전체 스캔)`);
   }
 
-  console.log(`\n🔔 신규 매물 폴링`);
   console.log(`   지역: ${targetRegions.map(r => r.name).join(', ')}`);
-  console.log(`   타일: ${totalTiles}개`);
-  console.log(`   모드: ${scanOnly ? '스캔만 (deep scan 안함)' : '스캔 + deep scan'}`);
-
-  const globalStart = Date.now();
+  console.log(`   타일: ${tiles.length}개`);
+  console.log(`   모드: ${scanOnly ? '스캔만 (deep scan 안함)' : `스캔 + deep scan (순환 ${rotateCount}개)`}`);
 
   // [1단계] 신규 매물 감지
-  const { changedComplexNames, newArticlesData } = await scanForNewArticles(targetRegions);
+  const { changedComplexNames, newArticlesData } = await scanForNewArticles(tiles, isFullScan);
 
-  if (changedComplexNames.size === 0) {
+  if (changedComplexNames.size === 0 && scanOnly) {
     console.log(`\n✅ 새 매물 없음!`);
     const elapsed = ((Date.now() - globalStart) / 60000).toFixed(1);
     console.log(`   총 소요: ${elapsed}분\n`);
@@ -596,9 +718,9 @@ async function main() {
     return;
   }
 
-  // [2단계] deep scan
+  // [2단계] deep scan (신규 + 순환)
   if (!scanOnly) {
-    await deepScanChangedComplexes(changedComplexNames);
+    await deepScanChangedComplexes(changedComplexNames, rotateCount);
   } else {
     console.log(`\n📋 변동 단지 목록 (--scan-only):`);
     for (const [name, atclNos] of changedComplexNames) {

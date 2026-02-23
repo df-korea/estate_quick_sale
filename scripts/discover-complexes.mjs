@@ -18,21 +18,13 @@
  *   node scripts/discover-complexes.mjs --region "서울"  # Specific region
  */
 
-import pg from 'pg';
+import { pool } from './db.mjs';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROGRESS_FILE = path.join(__dirname, '..', 'logs', 'discover-progress.json');
-
-const { Pool } = pg;
-const pool = new Pool({
-  host: 'localhost',
-  port: 5432,
-  database: 'estate_quick_sale',
-  user: process.env.USER,
-});
 
 const HEADERS = {
   'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)',

@@ -19,14 +19,9 @@
  *   node scripts/collect-articles.mjs --smart        # deal_count 차등 스캔 (~6시간)
  */
 
-import pg from 'pg';
+import { pool } from './db.mjs';
 import fs from 'node:fs';
 import { parseArgs } from 'node:util';
-
-const { Pool } = pg;
-const pool = new Pool({
-  host: 'localhost', port: 5432, database: 'estate_quick_sale', user: process.env.USER, max: 5,
-});
 
 // ── 설정 ──
 

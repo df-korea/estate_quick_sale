@@ -39,44 +39,35 @@
 
 ## 3. 데이터 소스 (실측 검증 완료)
 
-### 3-1. 네이버 부동산 비공식 API (호가 데이터)
+### 3-1. fin.land.naver.com API (호가 데이터) — 현행
 
 | 항목 | 내용 |
 |------|------|
-| 엔드포인트 | `m.land.naver.com/complex/getComplexArticleList` |
-| 인증 | 없음 (User-Agent, Referer 헤더만 필요) |
-| 응답 | JSON, 페이지당 20건 |
-| Rate limit | 요청 간 1.5초 간격이면 안정적 |
-| 법적 리스크 | 비공식 API, 네이버 이용약관상 크롤링 금지, 차단/변경 가능 |
+| 엔드포인트 | `fin.land.naver.com/front-api/v1/complex/article/list` (POST) |
+| 인증 | Playwright 브라우저 세션 필요 (headful 모드) |
+| 응답 | JSON, 커서 기반 페이지네이션, 페이지당 최대 30건 |
+| Rate limit | **없음** (평균 120ms/req) |
+| 제약 | 클라우드 IP 차단 → 가정용 IP(로컬 맥)에서만 수집 가능 |
 
-**실측 검증 (2026-02-18):**
-- 서울 주요 10개 단지 전량 수집 성공
-- 잠실 리센츠: 매매 226건(그룹), 전세 57건, 월세 125건 수집 완료
-- 그룹핑 구조: API 226건 = 같은 주소 그룹, 실제 개별 매물 ~935건 (sameAddrCnt 합산)
+**실측 검증 (2026-02-23):**
+- 서울+수도권 10,295개 단지, 17,541 API 요청, 31분 소요
+- 42개 필드 수집 (가격 원단위, 면적, 층수, 방향, 검증타입, 이미지 등)
+- 가격변동 이력(priceChangeHistories) 포함
 
-**매물당 수집 가능 데이터 (38개 필드):**
+**매물당 수집 가능 데이터 (42개 필드):**
 
 | 분류 | 필드 | 설명 |
 |------|------|------|
-| 가격 | `prcInfo` | 호가 (예: "29억", "42억 2,000") |
-| 면적 | `spc1`, `spc2` | 공급면적, 전용면적 (m²) |
-| 위치 | `bildNm`, `flrInfo`, `direction` | 동, 층정보(고/20), 방향 |
-| 설명 | `atclFetrDesc` | 중개사 작성 설명 (50자 내외) |
-| 사진 | `repImgUrl` | 대표 이미지 1장 (매물의 25~50%에 존재) |
-| 중개사 | `rltrNm`, `cpNm` | 중개사무소명, 정보제공사 |
-| 상태 | `tradCmplYn`, `cfmYmd` | 거래완료 여부, 확인일자 |
-| 태그 | `tagList` | ["2년이내", "대단지", "방세개"] 등 |
-| 그룹 | `sameAddrCnt`, `sameAddrHash` | 같은 주소 매물 수, 그룹 해시 |
-
-**사진 접근:**
-- CDN: `https://landthumb-phinf.pstatic.net` + `repImgUrl`
-- JPEG, 1500×1125 해상도, 직접 다운로드 확인 완료
-
-**수집 불가 데이터:**
-- 동/호수 상세 (비공개)
-- 매물 상세 설명 긴 버전 (fin.land API rate limit 매우 공격적)
-- 중개사 연락처
-- 매물 등록일 (확인일만 있음)
+| 가격 | `dealPrice`, `formattedDealPrice` | 호가 원단위 + 포맷 (예: "29억") |
+| 면적 | `supplySpace`, `exclusiveSpace`, `contractSpace` | 공급/전용/계약 면적 (m²) |
+| 위치 | `dongName`, `targetFloor`, `totalFloor`, `direction` | 동, 층, 방향 |
+| 설명 | `articleFeatureDescription` | 중개사 작성 설명 |
+| 사진 | `representativeImageUrl`, `imageCount` | 대표 이미지 + 사진 수 |
+| 검증 | `verificationType`, `exposureStartDate` | 소유자확인/서류확인, 노출시작일 |
+| 중개사 | `brokerageName`, `brokerName`, `cpId` | 중개사무소, 중개사명 |
+| 건물 | `buildingConjunctionDate`, `approvalElapsedYear` | 준공일, 경과연수 |
+| 그룹 | `groupArticleCount`, `groupRealtorCount` | 그룹 매물 수, 중개사 수 |
+| 가격변동 | `priceChangeStatus`, `priceChangeHistories` | 변동상태(UP/DOWN/SAME), 이력 |
 
 ### 3-2. 국토교통부 실거래가 API (거래 데이터)
 
@@ -90,67 +81,86 @@
 
 **제공 데이터:** 거래금액, 전용면적, 층, 계약년월일, 아파트명, 법정동, 건축년도, 매도자/매수자 구분
 
-### 3-3. 단지 목록 API
+### 3-3. 단지 정보 API
 
 | 엔드포인트 | 용도 |
 |-----------|------|
-| `m.land.naver.com/cluster/ajax/complexList` | 좌표 기반 단지 목록 (세대수, 가격범위, 매물수 포함) |
-| `m.land.naver.com/cluster/clusterList` | 지역 클러스터 |
+| `fin.land.naver.com/front-api/v1/complex?complexNumber={id}` | 단지 상세 (좌표, 주소, 준공일, 세대수) |
 
-**단지 정보 필드:** 단지명, 총동수, 총세대수, 사용승인일, 면적범위, 매매/전세/월세 가격범위 및 매물수
+**단지 정보:** 단지명, city/division/sector 주소, 좌표(lat/lon), 총동수, 총세대수, 준공일, 매물수
 
 ---
 
 ## 4. 데이터 수집 전략
 
-### 4-1. 서울 규모 추정
+### 4-1. 수집 규모 (실측, 2026-02-23)
 
 | 항목 | 수치 |
 |------|------|
-| 서울 아파트 단지 수 | ~2,000개 |
-| 단지당 평균 매매 매물 (그룹) | ~100건 |
-| 단지당 평균 페이지 수 | ~5페이지 |
-| 서울 전체 매매 매물 수집 시 총 요청 | ~10,000건 |
+| 수집 대상 단지 수 | 10,295개 (서울+수도권, is_active) |
+| 단지당 평균 매물 수 | ~2건 (빈 단지 포함) |
+| 전체 매물 수 | ~10,000건 (활성 매물) |
+| 전수 스캔 API 요청 | ~17,500건 |
+| 전수 스캔 소요 시간 | ~31분 |
+| API 응답 속도 | 평균 120ms/req (rate limit 없음) |
 
-### 4-2. 수집 소요 시간 (단일 IP, 1.5초 간격)
+### 4-2. 3-Mode 수집 전략 (현행)
 
-| 시나리오 | 단지 수 | 소요 시간 | 1시간 갱신 |
-|---------|--------|----------|-----------|
-| 유저 관심단지 | 10개 | **2분** | 가능 (30분 주기도 OK) |
-| 인기 단지 (매매만) | 50개 | **10분** | 가능 |
-| 인기 단지 (매매+전세+월세) | 50개 | **30분** | 가능 |
-| 서울 전체 (매매만) | ~2,000개 | **4.2시간** | 불가능 |
-
-### 4-3. 2-Tier 수집 전략 (채택)
+**핵심 제약:** fin.land API에 "최근 변경" 엔드포인트가 없음 → totalCount 비교 또는 전수 스캔으로만 변화 감지 가능.
 
 ```
-┌─ Tier 1: 빠른 체크 (30분 주기) ─────────────────────┐
-│ 대상: 유저 관심단지 + 인기 50단지                       │
-│ 방법: 1페이지만 조회                                    │
-│ 감지: 새 매물, 가격 변경, totAtclCnt 변화               │
-│ 소요: ~2분                                             │
+┌─ --quick (3시간 간격, ~20분) ───────────────────────┐
+│ Phase 1: 모든 단지 size=1 count 체크 (~15분)           │
+│   DB deal_count와 비교 → 변화 단지 식별                 │
+│   배치 20건씩 page.evaluate (IPC 최소화)               │
+│ Phase 2: 변화 단지 + 24h 미스캔 단지만 deep scan (~5분) │
+│   전체 페이지네이션 + UPSERT + 삭제/가격변동 감지        │
+│ 요청: ~9,000~10,000건                                │
 └──────────────────────────────────────────────────────┘
 
-┌─ Tier 2: 전체 스캔 (6시간 주기) ────────────────────┐
-│ 대상: Tier 1 단지 전체 페이지                          │
-│ 방법: 전 페이지 순회, DB의 atclNo 목록과 비교           │
-│ 감지: 사라진 매물 (DB에만 있는 atclNo = 삭제/거래완료)   │
-│ 소요: ~15분                                           │
+┌─ --full (기본, 초기 로드/데이터 복구용, ~31분) ────────┐
+│ 전수 UPSERT (diff 없음, 삭제 감지 안함)                 │
+│ 요청: ~17,500건                                       │
 └──────────────────────────────────────────────────────┘
 
-┌─ Tier 3: 실거래가 (1일 1회, 06:00) ────────────────┐
-│ 대상: 관심단지 법정동                                  │
-│ 방법: 국토부 API 호출                                  │
-│ 용도: 기준시세 재계산                                  │
+┌─ --incremental (1일 1회 03:00, ~35분) ─────────────┐
+│ 전수 diff scan                                       │
+│   DB pre-fetch → API 전체 페이지네이션                  │
+│   UPSERT + 가격 비교 → price_history 기록              │
+│   DB에 있지만 API에 없는 매물 → removed 처리            │
+│ 요청: ~17,500건                                       │
+└──────────────────────────────────────────────────────┘
+
+┌─ 실거래가 (1일 1회) ───────────────────────────────┐
+│ collect-real-transactions.mjs --incremental          │
+│ 국토부 API → real_transactions 테이블                  │
 └──────────────────────────────────────────────────────┘
 ```
 
-### 4-4. 사라진 매물 감지
+### 4-3. 운영 스케줄
 
-- 1페이지 체크로는 **어떤 매물이 사라졌는지** 알 수 없음
-- `totAtclCnt` 감소 → 뭔가 빠졌다는 신호, 전체 스캔 트리거
-- Tier 2 전체 스캔에서 DB의 `atclNo` 목록과 비교 → DB에만 존재하는 매물 = 삭제/거래완료 처리
-- 급매 알리미 특성상 사라진 매물은 6시간 후 반영돼도 무방 (새 급매 감지가 핵심)
+| 시각 | 모드 | 설명 |
+|------|------|------|
+| 03:00 | `--incremental` | 전수 스캔 + 삭제/가격변동 완전 감지 (~35분) |
+| 06:00, 09:00, 12:00, 15:00, 18:00, 21:00 | `--quick` | count 비교 → 변화 단지만 deep scan (~20분) |
+
+- lock 파일로 중복 실행 방지 (1시간 자동 만료)
+- incremental 실행 시간대(03:00~04:00)에는 quick 스킵
+
+### 4-4. 변경 감지 매커니즘
+
+| 변경 유형 | quick | incremental | 감지 방법 |
+|-----------|-------|-------------|-----------|
+| 신규 매물 | ✓ (변화 단지) | ✓ (전체) | UPSERT → xmax=0 |
+| 삭제 매물 | ✓ (변화 단지) | ✓ (전체) | seenArticleNos에 없으면 removed |
+| 가격 변동 | ✓ (변화 단지) | ✓ (전체) | DB deal_price vs API dealPrice 비교 → price_history |
+| 급매 전환 | ✓ (변화 단지) | ✓ (전체) | 키워드 감지 + bargain_detections |
+
+### 4-5. Edge Case 대응
+
+- **동시 추가+삭제 (totalCount 불변)**: daily incremental이 감지. quick에서도 24시간 미스캔 단지를 강제 deep scan으로 보완.
+- **브라우저 세션 만료**: 에러 발생 시 재시작
+- **삭제 후 재등장 매물**: UPSERT 시 `article_status='active'`, `removed_at=NULL`로 복원
 
 ---
 
@@ -170,12 +180,12 @@
 
 ```
 검색 대상 필드:
-1. atclFetrDesc (매물 설명) - "급매", "급처분", "급히", "급전" 등
-2. tagList (태그 목록) - "급매" 태그 존재 여부
+1. articleFeatureDescription (매물 설명) - "급매", "급처분", "급히", "급전" 등
 
 판별 로직:
-IF "급매" OR "급처분" OR "급히" OR "급전" IN (atclFetrDesc, tagList)
-  → 급매 매물로 분류
+IF 키워드 MATCH IN articleFeatureDescription
+  → is_bargain = true, bargain_keyword 저장
+  → bargain_detections 테이블에 기록
   → 사용자에게 알림 발송
 ELSE
   → 일반 매물
@@ -189,7 +199,12 @@ ELSE
 | **급처분** | 1순위 | 급하게 처분 |
 | **급전** | 2순위 | 급전 필요로 인한 매도 |
 | **급히** | 2순위 | 급하게 매도 |
-| **마이너스피** | 3순위 | 시세 이하 매물 (P2에서 추가 검토) |
+| **마이너스피** | 3순위 | 시세 이하 매물 |
+| **마피** | 3순위 | 마이너스피 줄임말 |
+| **급급** | 3순위 | 매우 급한 매도 |
+| **손절** | 3순위 | 손해 감수 매도 |
+| **최저가** | 3순위 | 단지 내 최저가 강조 |
+| **급하게** | 3순위 | 급하게 매도 |
 
 ### 5-4. 정렬 기준 (급매 피드 내)
 
@@ -211,10 +226,10 @@ ELSE
 │  Oracle VM (한국 클라우드)                        │
 │                                                 │
 │  PostgreSQL DB (168.107.44.148:8081)             │
-│  ├ complexes (단지)      ├ users                 │
-│  ├ articles (매물/호가)   ├ watchlist (관심단지)   │
-│  ├ price_history (변동)   ├ alert_history (알림)   │
-│  ├ real_transactions     ├ bargain_detections    │
+│  ├ complexes (10,295단지) ├ users                │
+│  ├ articles (매물/호가)    ├ watchlist (관심단지)  │
+│  ├ price_history (변동)    ├ alert_history (알림) │
+│  ├ real_transactions (1.3M)├ bargain_detections  │
 │  └ collection_runs                               │
 │                                                 │
 │  Express API 서버 (:3001)                        │
@@ -224,22 +239,24 @@ ELSE
 └───────────────────────────────────────────────┘
                      ▲ DB 원격 접속 (PGHOST)
 ┌────────────────────┴───────────────────────────┐
-│  로컬 맥 (수집 전용)                              │
+│  로컬 맥 (수집 전용, Playwright headful)          │
 │                                                 │
-│  수집 스크립트 (가정용 IP 필수)                     │
-│  ├ poll-new-articles.mjs    (Tier1, 1~2시간 주기) │
-│  ├ collect-articles.mjs     (Tier2, 1일 1회)     │
-│  ├ collect-real-transactions.mjs (Tier3, 1일 1회)│
-│  └ discover-complexes.mjs   (단지 발굴, 필요 시)  │
+│  collect-finland.mjs (fin.land API, 3-mode)      │
+│  ├ --quick         (3시간 간격, count→deep scan) │
+│  ├ --incremental   (1일 1회, 전수 diff scan)     │
+│  └ --full          (초기 로드/복구용)             │
 │                                                 │
-│  .command 파일 (macOS 더블클릭 실행)               │
+│  enrich-complexes.mjs (단지 정보 보강)            │
+│  collect-real-transactions.mjs (실거래가, 1일 1회)│
+│                                                 │
+│  lock 파일로 중복 실행 방지                        │
 └───────┬──────────────────────┬────────────────┘
         ▼                      ▼
-  네이버 부동산 API         국토부 실거래 API
-  (비공식, 호가)           (공식, 무료)
+  fin.land.naver.com API   국토부 실거래 API
+  (Playwright, rate limit 없음)  (공식, 무료)
 ```
 
-**제약사항:** 네이버가 클라우드/데이터센터 IP (Oracle Cloud, AWS, Supabase, Vercel 등)를 차단하므로, 수집 스크립트는 **반드시 가정용 IP(로컬 맥)에서 실행**해야 함. 서버에서는 DB + API 서비스만 운영.
+**제약사항:** 네이버가 클라우드/데이터센터 IP (Oracle Cloud, AWS, Supabase, Vercel 등)를 차단하므로, 수집 스크립트는 **반드시 가정용 IP(로컬 맥)에서 Playwright headful 모드로 실행**해야 함. 서버에서는 DB + API 서비스만 운영.
 
 ### 기술 스택
 
@@ -250,311 +267,76 @@ ELSE
 | State | Zustand + TanStack Query | 경량 + 서버 상태 캐싱 |
 | Chart | Recharts | 실거래가 추이 차트 |
 | API 서버 | Express (Node.js) on Oracle VM | 한국 IP 필수 (네이버 차단 대응) |
-| DB | PostgreSQL (Oracle VM, 168.107.44.148:8081) | 시계열 + 관계형 |
-| 수집 | Node.js 스크립트 (로컬 맥에서 실행) | 가정용 IP 필수 |
+| DB | PostgreSQL 17 (Oracle VM, 168.107.44.148:8081) | 시계열 + 관계형 |
+| 수집 | Node.js + Playwright (로컬 맥, headful) | 가정용 IP + 브라우저 세션 필수 |
 | Auth | 토스 로그인 (OAuth 2.0) + Supabase Auth | 토스 앱 연동 필수 |
 | Push | 토스 스마트 발송 API | 세그먼트 기반 타겟팅 |
 
 ---
 
-## 7. DB 스키마
+## 7. DB 스키마 (v2 — fin.land 기반)
 
 ```sql
--- 아파트 단지
+-- 아파트 단지 (10,295개)
 complexes (
-  id, hscpNo, name, dong_code, lat, lon,
-  total_dong, total_households, use_approval_date,
-  min_area, max_area, created_at
+  id, hscp_no(UNIQUE), complex_name, property_type,
+  city, division, sector, address,
+  lat, lon, total_dong, total_households,
+  building_date, approval_elapsed_year,
+  deal_count, prev_deal_count, lease_count, rent_count,
+  is_active, last_collected_at, created_at, updated_at
 )
 
--- 매물 (호가) - atclNo로 고유 식별
+-- 매물 (42개 컬럼, 가격 원단위)
 articles (
-  id, atcl_no, complex_id, trade_type,
-  price, area_supply, area_exclusive,
-  floor_info, direction, building_name,
-  description, rep_image_url,
-  realtor_name, cp_name,
-  same_addr_cnt, same_addr_hash,
-  status, first_seen_at, last_seen_at
+  id, article_no(UNIQUE), complex_id, trade_type,
+  deal_price(BIGINT 원), warranty_price, rent_price,
+  formatted_price, management_fee, price_change_status,
+  supply_space, exclusive_space, contract_space, space_name,
+  target_floor, total_floor, direction, direction_standard,
+  dong_name, description, article_status(active/removed),
+  verification_type, exposure_start_date,
+  cp_id, brokerage_name, broker_name,
+  image_url, image_count, is_vr_exposed,
+  city, division, sector, building_date, approval_elapsed_year,
+  group_article_count, group_realtor_count, group_direct_trade_count,
+  is_bargain, bargain_keyword,
+  first_seen_at, last_seen_at, removed_at, raw_data(JSONB)
 )
 
 -- 호가 변동 이력
 price_history (
-  id, article_id, price, recorded_at
+  id, article_id, deal_price(BIGINT 원), formatted_price,
+  source(api_history/scan_detected), modified_date, recorded_at
 )
 
--- 실거래가
-transactions (
-  id, complex_id, deal_amount, area_exclusive,
+-- 실거래가 (국토부, 1.3M rows)
+real_transactions (
+  id, complex_id, deal_amount(만원), exclusive_area,
   floor, deal_year, deal_month, deal_day,
-  building_name, created_at
+  apt_name, dong_name, building_year, ...
 )
 
--- 급매 감지
+-- 급매 감지 로그
 bargain_detections (
   id, article_id, complex_id,
-  keyword_found, keyword_source,
+  detection_type, keyword, deal_price,
   detected_at
 )
 
--- 사용자
-users (
-  id, toss_user_key, tier, created_at
+-- 수집 실행 기록
+collection_runs (
+  id, run_type(full/quick/incremental/single),
+  started_at, finished_at,
+  complexes_scanned, articles_found, articles_new,
+  articles_updated, articles_removed, bargains_detected,
+  errors, status, notes
 )
 
--- 관심단지
-watchlist (
-  id, user_id, complex_id,
-  area_filter, floor_filter,
-  created_at
-)
-
--- 알림 이력
-alert_history (
-  id, user_id, article_id, alert_type,
-  sent_at
-)
+-- 사용자 / 관심단지 / 알림
+users ( id, toss_user_id, nickname, created_at )
+watchlist ( id, user_id, complex_id, created_at )
+alert_history ( id, user_id, article_id, alert_type, sent_at )
 ```
 
 ---
-
-## 8. 핵심 화면
-
-### 8-1. 홈 - 급매 피드
-
-```
-┌──────────────────────────────┐
-│ ← 급매 알리미         ⚙️ 설정 │
-│                              │
-│ 총 3건 급매 감지 중            │
-│                              │
-│ ┌──────────────────────────┐ │
-│ │ 🔴 급매            2시간전 │ │
-│ │ 잠실르엘 84m² · 18층       │ │
-│ │ 42.2억                    │ │
-│ │ "급매 한강뷰 올확장"        │ │
-│ └──────────────────────────┘ │
-│                              │
-│ ┌──────────────────────────┐ │
-│ │ 🔴 급매            5시간전 │ │
-│ │ 잠실리센츠 84m² · 중층     │ │
-│ │ 31.5억                    │ │
-│ │ "급처분 채광우수 역세권"    │ │
-│ └──────────────────────────┘ │
-│                              │
-│ [관심단지] [전체피드] [설정]    │
-└──────────────────────────────┘
-```
-
-### 8-2. 매물 상세
-
-```
-┌──────────────────────────────┐
-│ ← 매물 상세                   │
-│                              │
-│ 잠실르엘  84m² · 18층 · 남향   │
-│                              │
-│ ┌ 🔴 급매 ─────────────────┐ │
-│ │ 호가       42억 2,000      │ │
-│ │ 감지 키워드  "급매"         │ │
-│ └──────────────────────────┘ │
-│                              │
-│ 매물 설명                     │
-│ "급매 한강뷰 올확장 채광우수"   │
-│                              │
-│ [실거래가 차트 6개월]           │
-│  50┤     ●                   │
-│  48┤  ●     ●  ●             │
-│  46┤●          ●             │
-│  42┤─ ─ ─ ─ ─ ─ 현재호가 ─   │
-│                              │
-│ 중개사: 잠실대표공인중개사       │
-│                              │
-│ [네이버 부동산에서 보기 →]      │
-└──────────────────────────────┘
-```
-
-### 8-3. 단지 검색 & 관심 등록
-
-```
-┌──────────────────────────────┐
-│ 🔍 아파트 단지 검색            │
-│ ┌──────────────────────────┐ │
-│ │ 잠실                      │ │
-│ └──────────────────────────┘ │
-│                              │
-│ 잠실엘스 · 송파구 · 5,678세대  │
-│ 잠실리센츠 · 송파구 · 5,563세대 │
-│ 잠실르엘 · 송파구 · 1,865세대  │
-│ 잠실래미안아이파크 · 2,678세대  │
-│                              │
-│ ── 내 관심단지 (3/10) ───     │
-│ ✅ 잠실르엘     84m² 이상     │
-│ ✅ 잠실리센츠   전체          │
-│ ✅ 헬리오시티   59m² 이상     │
-└──────────────────────────────┘
-```
-
-### 8-4. 푸시 알림
-
-```
-Title: "🔴 급매 감지 잠실르엘"
-Body:  "84m² 18층 42.2억 - 급매 한강뷰 올확장"
-```
-
----
-
-## 9. 주요 User Flow
-
-### 9-1. 온보딩
-```
-토스 앱 → 미니앱 진입 → 토스 로그인 → 관심 단지 검색/등록 (최소 1개)
-→ 알림 조건 설정 (평형, 층) → 홈(급매 피드) 진입
-```
-
-### 9-2. 급매 알림 수신
-```
-Tier1 수집(30분) → 새 매물 발견 → "급매" 키워드 감지
-→ watchlist 매칭 → 필터 확인 → 토스 스마트 발송 → 푸시 알림
-→ 유저 탭 → 매물 상세 화면
-```
-
-### 9-3. 중복 방지
-- 같은 매물 24시간 내 재알림 금지
-- 일일 최대 알림 10건 (무료), 무제한 (유료)
-
----
-
-## 10. MVP 기능 범위
-
-### P0 (출시 필수)
-- [ ] 토스 로그인 연동
-- [ ] 단지 검색 및 관심 등록 (최대 3개, 무료)
-- [ ] 네이버 호가 수집 (Tier 1: 30분 주기)
-- [ ] 국토부 실거래가 수집 (1일 1회)
-- [ ] 급매 키워드 감지 엔진
-- [ ] 급매 피드 화면
-- [ ] 매물 상세 화면
-- [ ] 푸시 알림 (급매 매물)
-
-### P1 (출시 후 2주)
-- [ ] 실거래가 추이 차트
-- [ ] 알림 조건 설정 (평형, 층)
-- [ ] 네이버 부동산 매물 링크 연결
-- [ ] Tier 2 전체 스캔 (사라진 매물 감지)
-- [ ] 호가 변동 이력 추적
-
-### P2 (출시 후 1개월)
-- [ ] 미끼매물 필터링
-- [ ] 지역별 급매 랭킹
-- [ ] 급매 트렌드 차트
-- [ ] 유료 구독 (프리미엄)
-
----
-
-## 11. 수익 모델
-
-| 구분 | 무료 | 유료 (월 4,900원) |
-|------|------|-------------------|
-| 관심단지 | 3개 | 20개 |
-| 알림 | 급매 매물만 | 급매 + 가격변동 |
-| 일일 알림 | 3건 | 무제한 |
-| 실거래가 차트 | 3개월 | 1년 |
-| 미끼 필터링 | X | O |
-| 트렌드 차트 | X | O |
-
-Phase 3: 중개사 프로모션 광고, 토스뱅크 주택담보대출 연계
-
----
-
-## 12. 리스크 및 대응
-
-### 12-1. 네이버 API 차단/변경 리스크 (HIGH)
-
-| 리스크 | 대응 |
-|--------|------|
-| IP 차단 | 프록시 풀 (최소 3개 IP), 요청 간격 1.5초 이상 유지 |
-| API URL 변경 | 주간 헬스체크, 자동 알림, 수동 대응 |
-| 완전 차단 | 대안: 직방/다방 API 조사, 공공데이터 호가정보 탐색 |
-| 법적 이슈 | 이용약관 위반 가능성 인지, 규모 커지면 네이버 데이터 제휴 추진 |
-
-### 12-2. 급매 키워드 신뢰도 (MEDIUM)
-
-| 리스크 | 대응 |
-|--------|------|
-| 중개사가 "급매" 남용 (어뷰징) | 유저 피드백 + 신고 기능, 반복 어뷰징 중개사 필터링 |
-| 실제 급매인데 키워드 미표기 | 누락 가능 인정, 향후 P2에서 가격 기반 보조 로직 추가 검토 |
-| 광고성 급매 표기 | 매물 30일+ 유지 시 "오래된 급매" 표시로 신뢰도 보완 |
-
-### 12-3. 토스 미니앱 심사 (LOW)
-
-| 리스크 | 대응 |
-|--------|------|
-| 비공식 API 사용 심사 거부 | 서버사이드 수집이므로 앱 자체에는 크롤링 코드 없음 |
-| 부동산 관련 규제 | 중개 행위 아님, 정보 제공 서비스로 분류 |
-
----
-
-## 13. 개발 로드맵
-
-| 주차 | 작업 |
-|------|------|
-| **Week 1** | Supabase 셋업, DB 스키마, 토스 미니앱 프로젝트 초기화 |
-| **Week 2** | 네이버 호가 수집 Edge Function, 국토부 실거래 수집, pg_cron 설정 |
-| **Week 3** | 급매 키워드 감지 엔진, 알림 로직 |
-| **Week 4** | 프론트엔드 (토스 로그인, 단지 검색, 급매 피드) |
-| **Week 5** | 매물 상세 화면, 실거래가 차트, 알림 설정 |
-| **Week 6** | 토스 스마트 발송 연동, 푸시 알림 |
-| **Week 7** | 통합 테스트, 성능 최적화, 엣지 케이스 처리 |
-| **Week 8** | 토스 검수 제출, QA, 출시 |
-
----
-
-## 14. 성공 지표 (KPI)
-
-| 지표 | 목표 (출시 후 1개월) |
-|------|---------------------|
-| DAU | 1,000명 |
-| 관심단지 등록률 | 가입자의 80%+ |
-| 급매 알림 클릭률 | 30%+ |
-| 유료 전환율 | 5% |
-| 급매 판별 정확도 (유저 피드백) | 70%+ |
-
----
-
-## 부록: 검증된 API 엔드포인트
-
-### 네이버 부동산 (비공식)
-
-```
-# 매물 리스트 (핵심)
-GET m.land.naver.com/complex/getComplexArticleList
-  ?hscpNo={단지번호}&tradTpCd={A1:매매|B1:전세|B2:월세}&order=prc&page={n}
-  Headers: User-Agent(모바일), Referer(m.land.naver.com)
-
-# 단지 목록 (좌표 기반)
-GET m.land.naver.com/cluster/ajax/complexList
-  ?rletTpCd=APT&tradTpCd=A1&z={zoom}&lat={}&lon={}&btm={}&lft={}&top={}&rgt={}
-```
-
-### 검증된 단지번호 (hscpNo)
-
-| 단지명 | hscpNo |
-|--------|--------|
-| 잠실엘스 | 22627 |
-| 리센츠 | 22746 |
-| 헬리오시티 | 111515 |
-| 래미안원베일리 | 142155 |
-| 아크로리버파크 | 107613 |
-| 래미안대치팰리스 | 180280 |
-| 은마아파트 | 483 |
-| 잠실르엘 | 184857 |
-| 반포자이 | 22853 |
-| 파크리오 | 22675 |
-
-### 국토교통부 (공식)
-
-```
-GET apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev
-  ?serviceKey={key}&LAWD_CD={법정동코드5자리}&DEAL_YM={YYYYMM}
-```

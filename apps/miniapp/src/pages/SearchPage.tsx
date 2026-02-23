@@ -1,131 +1,94 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useComplexSearch } from '../hooks/useComplexSearch';
-import { LoadingSpinner } from '../components/LoadingSpinner';
+import { useComplexSearch } from '../hooks/useComplex';
+import LoadingSpinner from '../components/LoadingSpinner';
+import EmptyState from '../components/EmptyState';
 
-export function SearchPage() {
+export default function SearchPage() {
   const [query, setQuery] = useState('');
-  const { data: results, isLoading } = useComplexSearch(query);
-  const navigate = useNavigate();
+  const { results, loading } = useComplexSearch(query);
+  const nav = useNavigate();
 
   return (
-    <div>
-      <div className="header">
-        <h1>단지 검색</h1>
+    <div className="page">
+      <div className="page-header">
+        <h1>검색</h1>
       </div>
-
       <div className="page-content">
-        {/* Search input */}
+        {/* Search Input */}
         <div style={{
           position: 'relative',
-          marginBottom: '20px',
+          marginBottom: 'var(--space-16)',
         }}>
           <input
             type="text"
-            placeholder="아파트/오피스텔 단지명 검색"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="단지명을 검색하세요"
             style={{
               width: '100%',
-              padding: '12px 16px',
-              borderRadius: 'var(--radius-md)',
-              border: '1px solid var(--color-gray-400)',
-              fontSize: '15px',
+              padding: 'var(--space-12) var(--space-16)',
+              paddingLeft: 40,
+              border: '1px solid var(--border)',
+              borderRadius: 'var(--radius-lg)',
+              background: 'var(--white)',
+              fontSize: 'var(--text-md)',
               outline: 'none',
-              background: 'var(--color-gray-100)',
-              fontFamily: 'var(--font-sans)',
             }}
-            onFocus={(e) => { e.target.style.borderColor = 'var(--color-blue)'; }}
-            onBlur={(e) => { e.target.style.borderColor = 'var(--color-gray-400)'; }}
           />
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--gray-400)" strokeWidth="2"
+            style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)' }}>
+            <path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
           {query && (
-            <button
-              onClick={() => setQuery('')}
-              style={{
-                position: 'absolute',
-                right: '12px',
-                top: '50%',
-                transform: 'translateY(-50%)',
-                background: 'var(--color-gray-400)',
-                border: 'none',
-                borderRadius: '50%',
-                width: '20px',
-                height: '20px',
-                fontSize: '12px',
-                color: 'white',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              ✕
+            <button onClick={() => setQuery('')}
+              style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--gray-400)', padding: 4 }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M18 6L6 18M6 6l12 12" />
+              </svg>
             </button>
           )}
         </div>
 
         {/* Results */}
-        {isLoading && <LoadingSpinner message="검색 중..." />}
+        {loading && <LoadingSpinner />}
 
-        {!isLoading && query.length >= 1 && results && results.length === 0 && (
-          <div className="empty-state">
-            <p>'{query}' 검색 결과가 없습니다</p>
-          </div>
+        {!loading && query.length >= 1 && results.length === 0 && (
+          <EmptyState message="검색 결과가 없습니다" />
         )}
 
-        {!query && (
-          <div className="empty-state">
-            <p style={{ fontSize: '32px', marginBottom: '8px' }}>🏢</p>
-            <p>단지명을 입력하여 검색하세요</p>
-            <p style={{ fontSize: '12px', color: 'var(--color-gray-600)', marginTop: '4px' }}>
-              예: 잠실, 헬리오, 래미안
-            </p>
-          </div>
-        )}
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
-          {results?.map((complex) => {
-            const totalArticles = complex.deal_count + complex.lease_count + complex.rent_count;
-            return (
-              <div
-                key={complex.id}
-                onClick={() => navigate(`/complex/${complex.id}`)}
-                style={{
-                  padding: '14px 0',
-                  borderBottom: '1px solid var(--color-gray-200)',
-                  cursor: 'pointer',
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <span style={{ fontSize: '15px', fontWeight: 600 }}>{complex.complex_name}</span>
-                      {complex.property_type === 'OPST' && (
-                        <span style={{
-                          fontSize: '11px', color: 'var(--color-blue)', fontWeight: 600,
-                          background: 'var(--color-blue-light)', padding: '1px 6px', borderRadius: '3px',
-                        }}>
-                          오피스텔
-                        </span>
-                      )}
-                    </div>
-                    <div style={{ fontSize: '13px', color: 'var(--color-gray-600)', marginTop: '2px' }}>
-                      {complex.total_households ? `${complex.total_households.toLocaleString()}세대` : ''}
-                    </div>
-                  </div>
-                  <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontSize: '13px', color: 'var(--color-gray-700)' }}>
-                      매물 {totalArticles}건
-                    </div>
-                    <div style={{ fontSize: '12px', color: 'var(--color-gray-500)' }}>
-                      매매 {complex.deal_count} · 전세 {complex.lease_count} · 월세 {complex.rent_count}
-                    </div>
+        {!loading && results.length > 0 && (
+          <div>
+            <div className="text-sm text-gray" style={{ marginBottom: 'var(--space-8)' }}>
+              {results.length}개 단지
+            </div>
+            {results.map(c => (
+              <div key={c.id}
+                className="flex items-center justify-between"
+                style={{ padding: 'var(--space-12) 0', borderBottom: '1px solid var(--border)', cursor: 'pointer' }}
+                onClick={() => nav(`/complex/${c.id}`)}>
+                <div>
+                  <div style={{ fontWeight: 600 }}>{c.complex_name}</div>
+                  <div className="text-sm text-gray">
+                    {c.property_type && `${c.property_type} · `}
+                    {c.total_households && `${c.total_households}세대`}
                   </div>
                 </div>
+                <div className="text-sm text-gray" style={{ flexShrink: 0, textAlign: 'right' }}>
+                  {c.deal_count > 0 && <span>매매 {c.deal_count}</span>}
+                  {c.lease_count > 0 && <span style={{ marginLeft: 6 }}>전세 {c.lease_count}</span>}
+                </div>
               </div>
-            );
-          })}
-        </div>
+            ))}
+          </div>
+        )}
+
+        {!loading && query.length === 0 && (
+          <div style={{ padding: 40, textAlign: 'center', color: 'var(--gray-400)' }}>
+            <div style={{ fontSize: 'var(--text-2xl)', marginBottom: 8 }}>검색</div>
+            <p className="text-sm">관심있는 단지명을 입력하세요</p>
+          </div>
+        )}
       </div>
     </div>
   );
