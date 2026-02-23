@@ -6,9 +6,25 @@
  * - POST: { userKey, referrer }
  *
  * referrer: UNLINK | WITHDRAWAL_TERMS | WITHDRAWAL_TOSS
+ *
+ * 토스 콘솔 테스트 시 브라우저에서 직접 호출하므로 CORS 필수.
+ * 콘솔 테스트 시 userKey=0 으로 전달됨.
  */
 
 const BASIC_AUTH_VALUE = process.env.TOSS_DISCONNECT_BASIC_AUTH || '';
+const ALLOWED_ORIGINS = [
+  'https://apps-in-toss.toss.im',
+  'https://developers-apps-in-toss.toss.im',
+];
+
+function setCors(req, res) {
+  const origin = req.headers.origin;
+  if (ALLOWED_ORIGINS.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+}
 
 function verifyBasicAuth(authHeader) {
   if (!BASIC_AUTH_VALUE) return true; // 미설정 시 스킵
@@ -19,6 +35,13 @@ function verifyBasicAuth(authHeader) {
 }
 
 export default async function handler(req, res) {
+  setCors(req, res);
+
+  // Preflight OPTIONS
+  if (req.method === 'OPTIONS') {
+    return res.status(204).end();
+  }
+
   // Basic Auth 검증
   const authHeader = req.headers.authorization;
   if (!verifyBasicAuth(authHeader)) {
