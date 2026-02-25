@@ -2,6 +2,9 @@ import { useState, useEffect, useCallback } from 'react';
 
 const TOKEN_KEY = 'auth_token';
 const USER_KEY = 'auth_user';
+const API_BASE = import.meta.env.PROD
+  ? 'https://estate-quick-sale-backs-projects-87a24f27.vercel.app'
+  : '';
 
 interface AuthUser {
   userId: number;
@@ -31,7 +34,7 @@ export function useAuth(): AuthState {
   // Verify token on mount
   useEffect(() => {
     if (!token) return;
-    fetch('/api/auth/me', {
+    fetch(`${API_BASE}/api/auth/me`, {
       headers: { Authorization: `Bearer ${token}` },
     }).then(res => {
       if (!res.ok) {
@@ -50,7 +53,7 @@ export function useAuth(): AuthState {
       const { appLogin } = await import('@apps-in-toss/web-framework');
       const { authorizationCode, referrer } = await appLogin();
 
-      const res = await fetch('/api/auth/login', {
+      const res = await fetch(`${API_BASE}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ authorizationCode, referrer }),
@@ -79,7 +82,7 @@ export function useAuth(): AuthState {
   const logout = useCallback(async () => {
     try {
       if (token) {
-        await fetch('/api/auth/logout', {
+        await fetch(`${API_BASE}/api/auth/logout`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${token}` },
         });
