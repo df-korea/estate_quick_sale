@@ -8,3 +8,5 @@ dist/
 *.log
 logs/
 .playwright-mcp/
+.vercel
+scripts/data/

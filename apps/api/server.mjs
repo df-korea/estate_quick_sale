@@ -9,11 +9,36 @@
 
 import express from 'express';
 import cors from 'cors';
+import crypto from 'crypto';
 import { pool } from '../../scripts/db.mjs';
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// ── JWT 인증 헬퍼 (api/_lib/jwt.js와 동일 로직) ──
+
+function verifyJwt(token) {
+  if (!token) return null;
+  const secret = process.env.TOSS_AIT_API_KEY;
+  if (!secret) return null;
+  const parts = token.split('.');
+  if (parts.length !== 3) return null;
+  const [header, body, sig] = parts;
+  const expectedSig = crypto.createHmac('sha256', secret).update(`${header}.${body}`).digest('base64url');
+  if (sig !== expectedSig) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(body, 'base64url').toString());
+    if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) return null;
+    return payload;
+  } catch { return null; }
+}
+
+function extractUser(req) {
+  const auth = req.headers.authorization;
+  if (!auth?.startsWith('Bearer ')) return null;
+  return verifyJwt(auth.slice(7));
+}
 
 // ── 가격 포맷 헬퍼 (원 → 억/만원) ──
 
@@ -28,13 +53,23 @@ function formatWon(won) {
   return `${Math.round(num / 10000).toLocaleString()}만`;
 }
 
+// ── bargain_type 필터 헬퍼 ──
+
+function bargainTypeCondition(bargainType, alias = 'a') {
+  if (bargainType === 'keyword') return `${alias}.bargain_type IN ('keyword', 'both')`;
+  if (bargainType === 'price') return `${alias}.bargain_type IN ('price', 'both')`;
+  return `${alias}.is_bargain = true`; // 'all' or unspecified
+}
+
 // ============================================
 // 급매 (Bargains)
 // ============================================
 
-// GET /api/bargains?limit=50
+// GET /api/bargains?limit=50&bargain_type=price
 app.get('/api/bargains', async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+  const bargainType = req.query.bargain_type; // 'keyword'|'price'|undefined
+  const bargainWhere = bargainTypeCondition(bargainType);
   try {
     const { rows } = await pool.query(`
       SELECT a.id, a.article_no, a.complex_id, a.trade_type,
@@ -42,6 +77,7 @@ app.get('/api/bargains', async (req, res) => {
         a.exclusive_space, a.supply_space, a.target_floor, a.total_floor,
         a.direction, a.description, a.dong_name,
         a.image_url, a.brokerage_name, a.bargain_keyword,
+        a.bargain_type, a.bargain_score,
         a.first_seen_at, a.management_fee, a.verification_type,
         a.price_change_status, a.image_count,
         c.complex_name, c.property_type, c.hscp_no,
@@ -49,7 +85,7 @@ app.get('/api/bargains', async (req, res) => {
         (SELECT ph2.deal_price FROM price_history ph2 WHERE ph2.article_id = a.id ORDER BY ph2.recorded_at ASC LIMIT 1) AS initial_price
       FROM articles a
       JOIN complexes c ON a.complex_id = c.id
-      WHERE a.is_bargain = true AND a.article_status = 'active'
+      WHERE ${bargainWhere} AND a.article_status = 'active'
       ORDER BY a.first_seen_at DESC
       LIMIT $1
     `, [limit]);
@@ -62,10 +98,43 @@ app.get('/api/bargains', async (req, res) => {
 // GET /api/bargains/count
 app.get('/api/bargains/count', async (_req, res) => {
   try {
-    const { rows } = await pool.query(
-      `SELECT count(*)::int as count FROM articles WHERE is_bargain = true AND article_status = 'active'`
-    );
-    res.json({ count: rows[0].count });
+    const { rows } = await pool.query(`
+      SELECT
+        count(*) FILTER (WHERE is_bargain = true)::int AS count,
+        count(*) FILTER (WHERE bargain_type = 'keyword')::int AS keyword_count,
+        count(*) FILTER (WHERE bargain_type = 'price')::int AS price_count,
+        count(*) FILTER (WHERE bargain_type = 'both')::int AS both_count
+      FROM articles WHERE article_status = 'active'
+    `);
+    res.json(rows[0]);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================================
+// 매물 검색 (Article Search — 커뮤니티 첨부용)
+// ============================================
+
+// GET /api/articles/search?q=잠실엘스&limit=10
+app.get('/api/articles/search', async (req, res) => {
+  const q = (req.query.q || '').trim();
+  if (q.length < 1) return res.json([]);
+  const limit = Math.min(parseInt(req.query.limit) || 10, 30);
+  try {
+    const { rows } = await pool.query(`
+      SELECT a.id, a.article_no, a.deal_price, a.formatted_price,
+        a.exclusive_space, a.trade_type, a.target_floor, a.total_floor,
+        a.bargain_score, a.bargain_keyword,
+        c.complex_name
+      FROM articles a
+      JOIN complexes c ON a.complex_id = c.id
+      WHERE a.article_status = 'active'
+        AND (c.complex_name ILIKE $1 OR a.article_no = $2)
+      ORDER BY a.deal_price DESC NULLS LAST
+      LIMIT $3
+    `, [`%${q}%`, q, limit]);
+    res.json(rows);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -81,6 +150,7 @@ app.get('/api/articles/:id', async (req, res) => {
     const { rows } = await pool.query(`
       SELECT a.*,
         c.complex_name, c.property_type AS complex_property_type, c.hscp_no AS complex_hscp_no, c.total_households,
+        c.sgg_cd, c.rt_apt_nm,
         (SELECT count(*)::int FROM price_history ph WHERE ph.article_id = a.id) AS price_change_count,
         (SELECT ph2.deal_price FROM price_history ph2 WHERE ph2.article_id = a.id ORDER BY ph2.recorded_at ASC LIMIT 1) AS initial_price
       FROM articles a
@@ -94,6 +164,8 @@ app.get('/api/articles/:id', async (req, res) => {
       property_type: row.complex_property_type,
       hscp_no: row.complex_hscp_no,
       total_households: row.total_households,
+      sgg_cd: row.sgg_cd,
+      rt_apt_nm: row.rt_apt_nm,
     };
     res.json(row);
   } catch (e) {
@@ -148,19 +220,73 @@ app.get('/api/complexes/:id', async (req, res) => {
   }
 });
 
-// GET /api/complexes/:id/articles?tradeType=A1
-app.get('/api/complexes/:id/articles', async (req, res) => {
-  const tradeType = req.query.tradeType || 'A1';
+// GET /api/complexes/:id/pyeong-types
+app.get('/api/complexes/:id/pyeong-types', async (req, res) => {
   try {
     const { rows } = await pool.query(`
-      SELECT id, article_no, deal_price, formatted_price, exclusive_space,
-        target_floor, total_floor, direction, description,
-        is_bargain, bargain_keyword, first_seen_at
+      SELECT space_name, exclusive_space,
+        round(exclusive_space / 3.3058)::int AS pyeong,
+        count(*)::int AS article_count
       FROM articles
-      WHERE complex_id=$1 AND trade_type=$2 AND article_status='active'
-      ORDER BY deal_price ASC NULLS LAST
-      LIMIT 100
-    `, [req.params.id, tradeType]);
+      WHERE complex_id = $1 AND article_status = 'active' AND space_name IS NOT NULL
+      GROUP BY space_name, exclusive_space
+      ORDER BY exclusive_space ASC
+    `, [req.params.id]);
+    res.json(rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/complexes/:id/dongs
+app.get('/api/complexes/:id/dongs', async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT dong_name, count(*)::int AS article_count
+      FROM articles
+      WHERE complex_id = $1 AND article_status = 'active' AND dong_name IS NOT NULL AND dong_name != ''
+      GROUP BY dong_name ORDER BY dong_name
+    `, [req.params.id]);
+    res.json(rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/complexes/:id/articles?tradeType=A1&sort=price_asc&bargainOnly=true&spaceName=84A&dongName=101동
+app.get('/api/complexes/:id/articles', async (req, res) => {
+  const tradeType = req.query.tradeType || 'A1';
+  const sort = req.query.sort || 'price_asc';
+  const bargainOnly = req.query.bargainOnly === 'true';
+  const spaceName = req.query.spaceName;
+  const dongName = req.query.dongName;
+  const priceExpr = 'COALESCE(NULLIF(deal_price,0), warranty_price)';
+  const sortMap = {
+    price_asc: `${priceExpr} ASC NULLS LAST`,
+    price_desc: `${priceExpr} DESC NULLS LAST`,
+    newest: 'first_seen_at DESC',
+  };
+  const orderBy = sortMap[sort] || sortMap.price_asc;
+  let where = ['complex_id=$1', "article_status='active'"];
+  let params = [req.params.id];
+  let idx = 2;
+  if (tradeType !== 'all') { where.push(`trade_type=$${idx++}`); params.push(tradeType); }
+  if (bargainOnly) where.push('is_bargain = true');
+  if (spaceName) { where.push(`space_name = $${idx++}`); params.push(spaceName); }
+  if (dongName) { where.push(`dong_name = $${idx++}`); params.push(dongName); }
+  params.push(100);
+  try {
+    const { rows } = await pool.query(`
+      SELECT id, article_no, trade_type, deal_price, warranty_price, rent_price,
+        formatted_price, exclusive_space, space_name, dong_name,
+        target_floor, total_floor, direction, description,
+        is_bargain, bargain_keyword, bargain_score, score_factors, first_seen_at,
+        (SELECT count(*)::int FROM price_history ph WHERE ph.article_id = articles.id) AS price_change_count
+      FROM articles
+      WHERE ${where.join(' AND ')}
+      ORDER BY ${orderBy}
+      LIMIT $${idx}
+    `, params);
     res.json(rows);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -543,27 +669,31 @@ app.get('/api/analysis/overview', async (_req, res) => {
   }
 });
 
-// GET /api/analysis/bargain-leaderboard?limit=20
+// GET /api/analysis/bargain-leaderboard?limit=20&bargain_type=keyword
 app.get('/api/analysis/bargain-leaderboard', async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+  const bt = req.query.bargain_type;
+  const bargainFilter = bargainTypeCondition(bt);
   try {
     const { rows } = await pool.query(`
       SELECT
         c.id AS complex_id,
         c.complex_name,
-        count(*) FILTER (WHERE a.is_bargain = true)::int AS bargain_count,
+        c.city, c.division, c.sector,
+        count(*) FILTER (WHERE ${bargainFilter})::int AS bargain_count,
         count(*)::int AS total_count,
         CASE WHEN count(*) > 0
-          THEN round(count(*) FILTER (WHERE a.is_bargain = true)::numeric / count(*)::numeric * 100, 1)
+          THEN round(count(*) FILTER (WHERE ${bargainFilter})::numeric / count(*)::numeric * 100, 1)
           ELSE 0
         END AS bargain_ratio,
-        round(avg(a.deal_price) FILTER (WHERE a.deal_price > 0))::bigint AS avg_price
+        round(avg(a.deal_price) FILTER (WHERE a.deal_price > 0))::bigint AS avg_price,
+        round(avg(a.bargain_score) FILTER (WHERE ${bargainFilter}), 1) AS avg_bargain_score
       FROM articles a
       JOIN complexes c ON a.complex_id = c.id
       WHERE a.article_status = 'active'
-      GROUP BY c.id, c.complex_name
-      HAVING count(*) FILTER (WHERE a.is_bargain = true) > 0
-      ORDER BY count(*) FILTER (WHERE a.is_bargain = true) DESC, bargain_ratio DESC
+      GROUP BY c.id, c.complex_name, c.city, c.division, c.sector
+      HAVING count(*) FILTER (WHERE ${bargainFilter}) > 0
+      ORDER BY count(*) FILTER (WHERE ${bargainFilter}) DESC, bargain_ratio DESC
       LIMIT $1
     `, [limit]);
     res.json(rows);
@@ -607,6 +737,58 @@ app.get('/api/analysis/recent-price-changes', async (req, res) => {
   }
 });
 
+// GET /api/analysis/top-price-drops?limit=10
+app.get('/api/analysis/top-price-drops', async (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit) || 10, 50);
+  try {
+    const { rows } = await pool.query(`
+      WITH first_last AS (
+        SELECT DISTINCT ON (ph.article_id)
+          ph.article_id,
+          first_value(ph.deal_price) OVER w AS initial_price,
+          a.deal_price AS current_price,
+          a.exclusive_space,
+          a.formatted_price,
+          a.target_floor,
+          a.total_floor,
+          a.bargain_score,
+          a.bargain_keyword,
+          c.complex_name,
+          c.id AS complex_id,
+          c.hscp_no
+        FROM price_history ph
+        JOIN articles a ON a.id = ph.article_id
+        JOIN complexes c ON c.id = a.complex_id
+        WHERE a.article_status = 'active' AND a.trade_type = 'A1' AND a.deal_price > 0
+        WINDOW w AS (PARTITION BY ph.article_id ORDER BY ph.recorded_at ASC)
+      ),
+      drops AS (
+        SELECT fl.*,
+          (fl.initial_price - fl.current_price) AS drop_amount,
+          round((1 - fl.current_price::numeric / fl.initial_price) * 100, 1) AS drop_pct,
+          (SELECT count(*)::int FROM (
+            SELECT ph2.deal_price,
+              lag(ph2.deal_price) OVER (ORDER BY ph2.recorded_at) AS prev
+            FROM price_history ph2
+            WHERE ph2.article_id = fl.article_id
+          ) sub WHERE prev IS NOT NULL AND sub.deal_price < sub.prev) AS drop_count
+        FROM first_last fl
+        WHERE fl.initial_price > fl.current_price
+      )
+      SELECT article_id, complex_name, complex_id, hscp_no,
+        exclusive_space, formatted_price, target_floor, total_floor,
+        bargain_score, bargain_keyword,
+        initial_price, current_price, drop_amount, drop_pct, drop_count
+      FROM drops
+      ORDER BY drop_amount DESC
+      LIMIT $1
+    `, [limit]);
+    res.json(rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ============================================
 // 관심단지 (Watchlist)
 // ============================================
@@ -645,7 +827,7 @@ app.get('/api/articles/:id/assessment', async (req, res) => {
   try {
     const { rows: [article] } = await pool.query(`
       SELECT a.id, a.deal_price, a.exclusive_space, a.first_seen_at, a.is_bargain,
-        a.bargain_keyword, a.complex_id, c.complex_name
+        a.bargain_keyword, a.complex_id, c.complex_name, c.sgg_cd, c.rt_apt_nm
       FROM articles a JOIN complexes c ON a.complex_id = c.id
       WHERE a.id = $1
     `, [req.params.id]);
@@ -665,55 +847,54 @@ app.get('/api/articles/:id/assessment', async (req, res) => {
     const now = new Date();
     const from6m = new Date(now.getFullYear(), now.getMonth() - 6, 1);
     const fromYm = from6m.getFullYear() * 100 + (from6m.getMonth() + 1);
+    const area = parseFloat(article.exclusive_space) || 0;
     const { rows: [txStats] } = await pool.query(`
       SELECT count(*)::int AS tx_count,
         round(avg(deal_amount))::bigint AS avg_tx_price
       FROM real_transactions
-      WHERE apt_nm = $1
+      WHERE complex_id = $1
         AND exclu_use_ar BETWEEN $2::numeric - 3 AND $2::numeric + 3
         AND (deal_year * 100 + deal_month) >= $3
         AND (cdeal_type IS NULL OR cdeal_type = '' OR cdeal_type != 'O')
-    `, [article.complex_name, parseFloat(article.exclusive_space) || 0, fromYm]);
+    `, [article.complex_id, area, fromYm]);
 
     const { rows: [phCount] } = await pool.query(
       `SELECT count(*)::int AS cnt FROM price_history WHERE article_id = $1`,
       [article.id]
     );
 
-    // 급매 스코어 계산
+    // 급매 스코어 계산 (최대 100점)
+    // 1. 단지 대비 (최대 40점)
+    // 2. 실거래 대비 (최대 40점)
+    // 3. 호가 변동 (최대 20점)
     let score = 0;
     const factors = [];
-
-    if (article.is_bargain) {
-      score += 25;
-      factors.push({ name: '급매 키워드', value: 25 });
-    }
 
     const avgPrice = complexStats?.avg_price;
     let discountVsComplex = null;
     if (avgPrice && article.deal_price && avgPrice > 0) {
       discountVsComplex = ((article.deal_price - avgPrice) / avgPrice) * 100;
-      if (discountVsComplex < -15) { score += 30; factors.push({ name: '단지 대비 15%+ 저렴', value: 30 }); }
-      else if (discountVsComplex < -10) { score += 22; factors.push({ name: '단지 대비 10%+ 저렴', value: 22 }); }
-      else if (discountVsComplex < -5) { score += 15; factors.push({ name: '단지 대비 5%+ 저렴', value: 15 }); }
-      else if (discountVsComplex < 0) { score += 5; factors.push({ name: '단지 평균 이하', value: 5 }); }
+      if (discountVsComplex < -15) { score += 40; factors.push({ name: '단지 대비 15%+ 저렴', value: 40 }); }
+      else if (discountVsComplex < -10) { score += 30; factors.push({ name: '단지 대비 10%+ 저렴', value: 30 }); }
+      else if (discountVsComplex < -5) { score += 20; factors.push({ name: '단지 대비 5%+ 저렴', value: 20 }); }
+      else if (discountVsComplex < 0) { score += 8; factors.push({ name: '단지 평균 이하', value: 8 }); }
     }
 
     let discountVsTx = null;
-    if (txStats?.avg_tx_price && article.deal_price && txStats.avg_tx_price > 0) {
-      discountVsTx = ((article.deal_price - txStats.avg_tx_price) / txStats.avg_tx_price) * 100;
-      if (discountVsTx < -10) { score += 25; factors.push({ name: '실거래 대비 10%+ 저렴', value: 25 }); }
-      else if (discountVsTx < -5) { score += 18; factors.push({ name: '실거래 대비 5%+ 저렴', value: 18 }); }
-      else if (discountVsTx < 0) { score += 8; factors.push({ name: '실거래 이하', value: 8 }); }
+    // real_transactions.deal_amount is in 만원, articles.deal_price is in 원 → convert to 원
+    const txAvgWon = txStats?.avg_tx_price ? txStats.avg_tx_price * 10000 : null;
+    if (txAvgWon && article.deal_price && txAvgWon > 0) {
+      discountVsTx = ((article.deal_price - txAvgWon) / txAvgWon) * 100;
+      if (discountVsTx < -10) { score += 40; factors.push({ name: '실거래 대비 10%+ 저렴', value: 40 }); }
+      else if (discountVsTx < -5) { score += 28; factors.push({ name: '실거래 대비 5%+ 저렴', value: 28 }); }
+      else if (discountVsTx < 0) { score += 12; factors.push({ name: '실거래 이하', value: 12 }); }
     }
 
-    if (phCount.cnt > 2) { score += 10; factors.push({ name: '호가 3회+ 변동', value: 10 }); }
-    else if (phCount.cnt > 1) { score += 5; factors.push({ name: '호가 변동 이력', value: 5 }); }
+    if (phCount.cnt >= 4) { score += 20; factors.push({ name: '호가 4회+ 변동', value: 20 }); }
+    else if (phCount.cnt >= 3) { score += 14; factors.push({ name: '호가 3회 변동', value: 14 }); }
+    else if (phCount.cnt >= 2) { score += 8; factors.push({ name: '호가 2회 변동', value: 8 }); }
 
     const daysOnMarket = Math.floor((Date.now() - new Date(article.first_seen_at).getTime()) / 86400000);
-    if (daysOnMarket > 60) { score += 10; factors.push({ name: '60일+ 미판매', value: 10 }); }
-    else if (daysOnMarket > 30) { score += 6; factors.push({ name: '30일+ 미판매', value: 6 }); }
-    else if (daysOnMarket > 14) { score += 3; factors.push({ name: '2주+ 미판매', value: 3 }); }
 
     const isLowest = complexStats?.min_price && article.deal_price && article.deal_price <= complexStats.min_price;
 
@@ -724,7 +905,7 @@ app.get('/api/articles/:id/assessment', async (req, res) => {
       discount_vs_transaction: discountVsTx ? Math.round(discountVsTx * 10) / 10 : null,
       complex_avg_price: avgPrice,
       complex_listing_count: complexStats?.count || 0,
-      tx_avg_price: txStats?.avg_tx_price || null,
+      tx_avg_price: txAvgWon || null,
       tx_count: txStats?.tx_count || 0,
       days_on_market: daysOnMarket,
       price_change_count: phCount.cnt,
@@ -807,17 +988,23 @@ app.get('/api/briefing', async (_req, res) => {
 // 지도 히트맵 (Map — complexes.city/division 직접 사용)
 // ============================================
 
-// GET /api/map/sido-heatmap
-app.get('/api/map/sido-heatmap', async (_req, res) => {
+// GET /api/map/sido-heatmap?bargain_type=price
+app.get('/api/map/sido-heatmap', async (req, res) => {
+  const bt = req.query.bargain_type;
+  const bargainFilter = bt === 'keyword'
+    ? `a.bargain_type IN ('keyword', 'both')`
+    : bt === 'price'
+    ? `a.bargain_type IN ('price', 'both')`
+    : `a.is_bargain = true`;
   try {
     const { rows } = await pool.query(`
       SELECT
         c.city AS sido_name,
         count(*) FILTER (WHERE a.article_status = 'active')::int AS total_articles,
-        count(*) FILTER (WHERE a.is_bargain = true AND a.article_status = 'active')::int AS bargain_count,
+        count(*) FILTER (WHERE ${bargainFilter} AND a.article_status = 'active')::int AS bargain_count,
         CASE WHEN count(*) FILTER (WHERE a.article_status = 'active') > 0
           THEN round(
-            count(*) FILTER (WHERE a.is_bargain = true AND a.article_status = 'active')::numeric
+            count(*) FILTER (WHERE ${bargainFilter} AND a.article_status = 'active')::numeric
             / count(*) FILTER (WHERE a.article_status = 'active')::numeric * 100, 1
           )
           ELSE 0
@@ -827,7 +1014,7 @@ app.get('/api/map/sido-heatmap', async (_req, res) => {
       LEFT JOIN articles a ON a.complex_id = c.id AND a.trade_type = 'A1'
       WHERE c.is_active = true AND c.city IS NOT NULL
       GROUP BY c.city
-      ORDER BY count(*) FILTER (WHERE a.is_bargain = true AND a.article_status = 'active') DESC
+      ORDER BY count(*) FILTER (WHERE ${bargainFilter} AND a.article_status = 'active') DESC
     `);
     res.json(rows);
   } catch (e) {
@@ -835,19 +1022,25 @@ app.get('/api/map/sido-heatmap', async (_req, res) => {
   }
 });
 
-// GET /api/map/sigungu-heatmap?sido=서울특별시
+// GET /api/map/sigungu-heatmap?sido=서울특별시&bargain_type=price
 app.get('/api/map/sigungu-heatmap', async (req, res) => {
   const { sido } = req.query;
   if (!sido) return res.status(400).json({ error: 'sido required' });
+  const bt = req.query.bargain_type;
+  const bargainFilter = bt === 'keyword'
+    ? `a.bargain_type IN ('keyword', 'both')`
+    : bt === 'price'
+    ? `a.bargain_type IN ('price', 'both')`
+    : `a.is_bargain = true`;
   try {
     const { rows } = await pool.query(`
       SELECT
         c.division AS sgg_name,
         count(*) FILTER (WHERE a.article_status = 'active')::int AS total_articles,
-        count(*) FILTER (WHERE a.is_bargain = true AND a.article_status = 'active')::int AS bargain_count,
+        count(*) FILTER (WHERE ${bargainFilter} AND a.article_status = 'active')::int AS bargain_count,
         CASE WHEN count(*) FILTER (WHERE a.article_status = 'active') > 0
           THEN round(
-            count(*) FILTER (WHERE a.is_bargain = true AND a.article_status = 'active')::numeric
+            count(*) FILTER (WHERE ${bargainFilter} AND a.article_status = 'active')::numeric
             / count(*) FILTER (WHERE a.article_status = 'active')::numeric * 100, 1
           )
           ELSE 0
@@ -857,7 +1050,7 @@ app.get('/api/map/sigungu-heatmap', async (req, res) => {
       LEFT JOIN articles a ON a.complex_id = c.id AND a.trade_type = 'A1'
       WHERE c.is_active = true AND c.city = $1
       GROUP BY c.division
-      ORDER BY count(*) FILTER (WHERE a.is_bargain = true AND a.article_status = 'active') DESC
+      ORDER BY count(*) FILTER (WHERE ${bargainFilter} AND a.article_status = 'active') DESC
     `, [sido]);
     res.json(rows);
   } catch (e) {
@@ -865,13 +1058,19 @@ app.get('/api/map/sigungu-heatmap', async (req, res) => {
   }
 });
 
-// GET /api/map/sigungu-complexes?division=송파구&limit=50
+// GET /api/map/sigungu-complexes?division=송파구&city=대구광역시&limit=50
 app.get('/api/map/sigungu-complexes', async (req, res) => {
-  const { sggCd, division } = req.query;
+  const { sggCd, division, city } = req.query;
   const divisionFilter = division || sggCd;
   if (!divisionFilter) return res.status(400).json({ error: 'division or sggCd required' });
   const limit = Math.min(parseInt(req.query.limit) || 50, 200);
   try {
+    let where = ['c.division = $1', 'c.is_active = true'];
+    let params = [divisionFilter];
+    let idx = 2;
+    if (city) { where.push(`c.city = $${idx++}`); params.push(city); }
+    params.push(limit);
+
     const { rows } = await pool.query(`
       SELECT
         c.id AS complex_id,
@@ -890,12 +1089,11 @@ app.get('/api/map/sigungu-complexes', async (req, res) => {
         round(avg(a.deal_price) FILTER (WHERE a.deal_price > 0 AND a.article_status = 'active'))::bigint AS avg_price
       FROM complexes c
       LEFT JOIN articles a ON a.complex_id = c.id AND a.trade_type = 'A1'
-      WHERE c.division = $1 AND c.is_active = true
+      WHERE ${where.join(' AND ')}
       GROUP BY c.id, c.complex_name, c.lat, c.lon
-      HAVING count(*) FILTER (WHERE a.article_status = 'active') > 0
       ORDER BY count(*) FILTER (WHERE a.is_bargain = true AND a.article_status = 'active') DESC, total_articles DESC
-      LIMIT $2
-    `, [divisionFilter, limit]);
+      LIMIT $${idx}
+    `, params);
     res.json(rows);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -965,25 +1163,28 @@ app.get('/api/analysis/district-bargains', async (req, res) => {
 
 // GET /api/bargains/filtered
 app.get('/api/bargains/filtered', async (req, res) => {
-  const { sort = 'newest', minPrice, maxPrice, minArea, maxArea, district, limit: lim = 50 } = req.query;
+  const { sort = 'newest', minPrice, maxPrice, minArea, maxArea, district, city, bargain_type: bt, limit: lim = 50 } = req.query;
   const limit = Math.min(parseInt(lim) || 50, 200);
   try {
-    let where = [`a.is_bargain = true`, `a.article_status = 'active'`, `a.trade_type = 'A1'`];
+    let where = [bargainTypeCondition(bt), `a.article_status = 'active'`];
     let params = [];
     let idx = 1;
 
-    if (minPrice) { where.push(`a.deal_price >= $${idx++}`); params.push(parseInt(minPrice)); }
-    if (maxPrice) { where.push(`a.deal_price <= $${idx++}`); params.push(parseInt(maxPrice)); }
+    if (minPrice) { where.push(`COALESCE(NULLIF(a.deal_price,0), a.warranty_price) >= $${idx++}`); params.push(parseInt(minPrice)); }
+    if (maxPrice) { where.push(`COALESCE(NULLIF(a.deal_price,0), a.warranty_price) <= $${idx++}`); params.push(parseInt(maxPrice)); }
     if (minArea) { where.push(`a.exclusive_space >= $${idx++}`); params.push(parseFloat(minArea)); }
     if (maxArea) { where.push(`a.exclusive_space <= $${idx++}`); params.push(parseFloat(maxArea)); }
     if (district) { where.push(`c.division = $${idx++}`); params.push(district); }
+    if (city) { where.push(`c.city = $${idx++}`); params.push(city); }
 
+    const priceExpr = 'COALESCE(NULLIF(a.deal_price,0), a.warranty_price)';
     const sortMap = {
       newest: 'a.first_seen_at DESC',
-      price_asc: 'a.deal_price ASC NULLS LAST',
-      price_desc: 'a.deal_price DESC NULLS LAST',
+      price_asc: `${priceExpr} ASC NULLS LAST`,
+      price_desc: `${priceExpr} DESC NULLS LAST`,
       area_asc: 'a.exclusive_space ASC NULLS LAST',
       area_desc: 'a.exclusive_space DESC NULLS LAST',
+      score_desc: 'a.bargain_score DESC NULLS LAST',
     };
     const orderBy = sortMap[sort] || sortMap.newest;
     params.push(limit);
@@ -993,7 +1194,7 @@ app.get('/api/bargains/filtered', async (req, res) => {
         a.deal_price, a.formatted_price, a.warranty_price, a.rent_price,
         a.exclusive_space, a.target_floor, a.total_floor, a.direction,
         a.description, a.dong_name,
-        a.bargain_keyword, a.first_seen_at,
+        a.bargain_keyword, a.bargain_type, a.bargain_score, a.score_factors, a.first_seen_at,
         c.complex_name, c.property_type, c.hscp_no,
         (SELECT count(*)::int FROM price_history ph WHERE ph.article_id = a.id) AS price_change_count
       FROM articles a
@@ -1003,6 +1204,47 @@ app.get('/api/bargains/filtered', async (req, res) => {
       LIMIT $${idx}
     `, params);
     res.json(rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/bargains/by-region — 지역별 급매 (가격 급매, bargain_score DESC)
+app.get('/api/bargains/by-region', async (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit) || 5, 20);
+  try {
+    const { rows } = await pool.query(`
+      WITH ranked AS (
+        SELECT a.id, a.article_no, a.complex_id, a.trade_type,
+          a.deal_price, a.formatted_price, a.warranty_price, a.rent_price,
+          a.exclusive_space, a.target_floor, a.total_floor, a.direction,
+          a.description, a.bargain_keyword, a.bargain_type, a.bargain_score,
+          a.first_seen_at,
+          c.complex_name, c.division, c.hscp_no,
+          ROW_NUMBER() OVER (PARTITION BY c.division ORDER BY a.bargain_score DESC NULLS LAST) AS rn
+        FROM articles a
+        JOIN complexes c ON a.complex_id = c.id
+        WHERE a.is_bargain = true AND a.article_status = 'active'
+          AND a.bargain_type IN ('price', 'both')
+          AND c.division IS NOT NULL
+      )
+      SELECT * FROM ranked WHERE rn <= $1
+      ORDER BY division, rn
+    `, [limit]);
+
+    // Group by division
+    const grouped = {};
+    for (const row of rows) {
+      if (!grouped[row.division]) grouped[row.division] = [];
+      grouped[row.division].push(row);
+    }
+
+    // Sort divisions by top bargain_score desc
+    const result = Object.entries(grouped)
+      .map(([division, articles]) => ({ division, articles, count: articles.length }))
+      .sort((a, b) => (b.articles[0]?.bargain_score ?? 0) - (a.articles[0]?.bargain_score ?? 0));
+
+    res.json(result);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -1048,6 +1290,405 @@ app.get('/api/stats', async (_req, res) => {
       lastCollectionAt: lastCollection.rows[0].last_collected_at,
       recentRuns: runs.rows,
     });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================================
+// 시세 (Market — real_transactions + complex_id FK)
+// ============================================
+
+const CANCEL_FILTER = `(cdeal_type IS NULL OR cdeal_type = '' OR cdeal_type != 'O')`;
+
+// GET /api/complexes/:id/market/stats
+app.get('/api/complexes/:id/market/stats', async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT count(*)::int AS total_count,
+        count(DISTINCT round(exclu_use_ar::numeric))::int AS area_type_count,
+        min(deal_year * 100 + deal_month) AS earliest,
+        max(deal_year * 100 + deal_month) AS latest
+      FROM real_transactions
+      WHERE complex_id = $1 AND ${CANCEL_FILTER}
+    `, [req.params.id]);
+    res.json(rows[0]);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/complexes/:id/market/area-types
+app.get('/api/complexes/:id/market/area-types', async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT area_bucket::float8 AS area_bucket,
+        round(area_bucket / 3.3058)::int AS pyeong,
+        count(*)::int AS tx_count,
+        round(avg(deal_amount))::bigint AS avg_price,
+        min(deal_amount) AS min_price,
+        max(deal_amount) AS max_price
+      FROM (
+        SELECT deal_amount, round(exclu_use_ar::numeric * 2) / 2 AS area_bucket
+        FROM real_transactions
+        WHERE complex_id = $1 AND ${CANCEL_FILTER}
+      ) sub
+      GROUP BY area_bucket
+      ORDER BY area_bucket
+    `, [req.params.id]);
+    res.json(rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/complexes/:id/market/trend?areaBucket=84.5&months=36
+app.get('/api/complexes/:id/market/trend', async (req, res) => {
+  const areaBucket = req.query.areaBucket ? parseFloat(req.query.areaBucket) : null;
+  const months = parseInt(req.query.months) || 36;
+  try {
+    const now = new Date();
+    const from = new Date(now.getFullYear(), now.getMonth() - months, 1);
+    const fromYm = from.getFullYear() * 100 + (from.getMonth() + 1);
+
+    let where = [`complex_id = $1`, `(deal_year * 100 + deal_month) >= $2`, CANCEL_FILTER];
+    let params = [req.params.id, fromYm];
+    let idx = 3;
+    if (areaBucket != null) { where.push(`round(exclu_use_ar::numeric * 2) / 2 = $${idx++}`); params.push(areaBucket); }
+
+    const { rows } = await pool.query(`
+      SELECT
+        deal_year || '-' || lpad(deal_month::text, 2, '0') AS month,
+        count(*)::int AS tx_count,
+        round(avg(deal_amount))::bigint AS avg_price,
+        min(deal_amount) AS min_price,
+        max(deal_amount) AS max_price
+      FROM real_transactions
+      WHERE ${where.join(' AND ')}
+      GROUP BY deal_year, deal_month
+      ORDER BY deal_year, deal_month
+    `, params);
+    res.json(rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/complexes/:id/market/transactions?areaBucket=84.5&limit=50
+app.get('/api/complexes/:id/market/transactions', async (req, res) => {
+  const areaBucket = req.query.areaBucket ? parseFloat(req.query.areaBucket) : null;
+  const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+  try {
+    let where = [`complex_id = $1`];
+    let params = [req.params.id];
+    let idx = 2;
+    if (areaBucket != null) { where.push(`round(exclu_use_ar::numeric * 2) / 2 = $${idx++}`); params.push(areaBucket); }
+    params.push(limit);
+
+    const { rows } = await pool.query(`
+      SELECT deal_year, deal_month, deal_day,
+        deal_amount, floor,
+        round(exclu_use_ar::numeric / 3.3058)::int || '평' AS pyeong_name,
+        CASE WHEN cdeal_type = 'O' THEN true ELSE false END AS is_cancel
+      FROM real_transactions
+      WHERE ${where.join(' AND ')}
+      ORDER BY deal_year DESC, deal_month DESC, deal_day DESC NULLS LAST
+      LIMIT $${idx}
+    `, params);
+    res.json(rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/complexes/:id/market/floor-analysis?areaBucket=84.5&months=36
+app.get('/api/complexes/:id/market/floor-analysis', async (req, res) => {
+  const areaBucket = req.query.areaBucket ? parseFloat(req.query.areaBucket) : null;
+  const months = parseInt(req.query.months) || 36;
+  try {
+    const now = new Date();
+    const from = new Date(now.getFullYear(), now.getMonth() - months, 1);
+    const fromYm = from.getFullYear() * 100 + (from.getMonth() + 1);
+
+    let where = [`complex_id = $1`, `(deal_year * 100 + deal_month) >= $2`,
+      `floor IS NOT NULL`, CANCEL_FILTER];
+    let params = [req.params.id, fromYm];
+    let idx = 3;
+    if (areaBucket != null) { where.push(`round(exclu_use_ar::numeric * 2) / 2 = $${idx++}`); params.push(areaBucket); }
+
+    const { rows } = await pool.query(`
+      SELECT
+        floor,
+        count(*)::int AS tx_count,
+        round(avg(deal_amount))::bigint AS avg_price,
+        min(deal_amount) AS min_price,
+        max(deal_amount) AS max_price
+      FROM real_transactions
+      WHERE ${where.join(' AND ')}
+      GROUP BY floor
+      ORDER BY floor
+    `, params);
+    res.json(rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================================
+// 동별 급매 랭킹 (Dong Rankings)
+// ============================================
+
+// GET /api/analysis/regional-dong-rankings?limit=10&bargainType=all
+app.get('/api/analysis/regional-dong-rankings', async (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit) || 10, 50);
+  const bt = req.query.bargainType || 'all';
+  let bargainWhere;
+  if (bt === 'keyword') bargainWhere = `a.bargain_type IN ('keyword', 'both')`;
+  else if (bt === 'price') bargainWhere = `a.bargain_score >= 60 AND a.bargain_type IN ('price', 'both')`;
+  else bargainWhere = `a.is_bargain = true`;
+  try {
+    const { rows } = await pool.query(`
+      SELECT c.city, c.division, c.sector,
+        c.division || ' ' || c.sector AS region_name,
+        count(*)::int AS bargain_count,
+        round(avg(a.bargain_score), 1) AS avg_bargain_score,
+        round(avg(a.deal_price) FILTER (WHERE a.deal_price > 0))::bigint AS avg_price
+      FROM articles a JOIN complexes c ON a.complex_id = c.id
+      WHERE ${bargainWhere}
+        AND a.article_status = 'active'
+        AND c.sector IS NOT NULL AND a.trade_type = 'A1'
+      GROUP BY c.city, c.division, c.sector
+      HAVING count(*) >= 2
+      ORDER BY count(*) DESC, c.division, c.sector
+      LIMIT $1
+    `, [limit]);
+    res.json(rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/analysis/regional-dong-articles?division=시흥시&sector=정왕동&limit=5
+app.get('/api/analysis/regional-dong-articles', async (req, res) => {
+  const { division, sector } = req.query;
+  if (!division || !sector) return res.status(400).json({ error: 'division and sector required' });
+  const limit = Math.min(parseInt(req.query.limit) || 5, 20);
+  try {
+    const { rows } = await pool.query(`
+      SELECT a.id, a.article_no, a.deal_price, a.formatted_price, a.exclusive_space,
+        a.target_floor, a.total_floor, a.bargain_keyword, a.bargain_score,
+        a.first_seen_at, a.bargain_type,
+        c.complex_name, c.id AS complex_id, c.hscp_no
+      FROM articles a
+      JOIN complexes c ON a.complex_id = c.id
+      WHERE a.is_bargain = true AND a.article_status = 'active'
+        AND c.division = $1 AND c.sector = $2 AND a.trade_type = 'A1'
+      ORDER BY a.bargain_score DESC NULLS LAST
+      LIMIT $3
+    `, [division, sector, limit]);
+    res.json(rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================================
+// 커뮤니티 (Community)
+// ============================================
+
+// GET /api/community/posts?page=1&limit=20&sort=newest|popular
+app.get('/api/community/posts', async (req, res) => {
+  const page = Math.max(parseInt(req.query.page) || 1, 1);
+  const limit = Math.min(parseInt(req.query.limit) || 20, 50);
+  const sort = req.query.sort || 'newest';
+  const offset = (page - 1) * limit;
+  const user = extractUser(req);
+  const userId = user?.userId || null;
+
+  const orderBy = sort === 'popular'
+    ? 'p.like_count DESC, p.created_at DESC'
+    : 'p.created_at DESC';
+
+  try {
+    const { rows } = await pool.query(`
+      SELECT p.id, p.title, p.content, p.nickname,
+        p.attached_article_id, p.view_count, p.like_count, p.comment_count,
+        p.created_at, p.updated_at,
+        CASE WHEN p.attached_article_id IS NOT NULL THEN (
+          SELECT row_to_json(sub) FROM (
+            SELECT a.id, a.deal_price, a.formatted_price, a.exclusive_space,
+              a.trade_type, c.complex_name
+            FROM articles a JOIN complexes c ON a.complex_id = c.id
+            WHERE a.id = p.attached_article_id
+          ) sub
+        ) END AS attached_article,
+        CASE WHEN $3::bigint IS NOT NULL THEN EXISTS(
+          SELECT 1 FROM community_likes cl WHERE cl.post_id = p.id AND cl.user_id = $3
+        ) ELSE false END AS liked_by_me
+      FROM community_posts p
+      WHERE p.is_deleted = false
+      ORDER BY ${orderBy}
+      LIMIT $1 OFFSET $2
+    `, [limit, offset, userId]);
+
+    const { rows: [{ count }] } = await pool.query(
+      `SELECT count(*)::int FROM community_posts WHERE is_deleted = false`
+    );
+
+    res.json({ posts: rows, total: count, page, limit });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/community/posts — JWT 인증 필수
+app.post('/api/community/posts', async (req, res) => {
+  const user = extractUser(req);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+  const { title, content, attached_article_id } = req.body;
+  if (!title?.trim() || !content?.trim()) {
+    return res.status(400).json({ error: 'title and content required' });
+  }
+  try {
+    // Get nickname from users table
+    const { rows: [u] } = await pool.query(`SELECT nickname FROM users WHERE id = $1`, [user.userId]);
+    const nickname = u?.nickname || '익명';
+
+    const { rows } = await pool.query(`
+      INSERT INTO community_posts (title, content, nickname, attached_article_id, user_id)
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING *
+    `, [title.trim(), content.trim(), nickname, attached_article_id || null, user.userId]);
+    res.status(201).json(rows[0]);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/community/posts/:id
+app.get('/api/community/posts/:id', async (req, res) => {
+  const user = extractUser(req);
+  const userId = user?.userId || null;
+  try {
+    // Increment view count
+    await pool.query(
+      `UPDATE community_posts SET view_count = view_count + 1 WHERE id = $1`,
+      [req.params.id]
+    );
+
+    const { rows: [post] } = await pool.query(`
+      SELECT p.*,
+        CASE WHEN p.attached_article_id IS NOT NULL THEN (
+          SELECT row_to_json(sub) FROM (
+            SELECT a.id, a.deal_price, a.formatted_price, a.exclusive_space,
+              a.trade_type, a.target_floor, a.total_floor, a.bargain_score,
+              a.bargain_keyword, c.complex_name, c.id AS complex_id
+            FROM articles a JOIN complexes c ON a.complex_id = c.id
+            WHERE a.id = p.attached_article_id
+          ) sub
+        ) END AS attached_article,
+        CASE WHEN $2::bigint IS NOT NULL THEN EXISTS(
+          SELECT 1 FROM community_likes cl WHERE cl.post_id = p.id AND cl.user_id = $2
+        ) ELSE false END AS liked_by_me
+      FROM community_posts p
+      WHERE p.id = $1 AND p.is_deleted = false
+    `, [req.params.id, userId]);
+    if (!post) return res.status(404).json({ error: 'Not found' });
+
+    // Get comments
+    const { rows: comments } = await pool.query(`
+      SELECT cc.*,
+        CASE WHEN $2::bigint IS NOT NULL THEN EXISTS(
+          SELECT 1 FROM community_likes cl WHERE cl.comment_id = cc.id AND cl.user_id = $2
+        ) ELSE false END AS liked_by_me
+      FROM community_comments cc
+      WHERE cc.post_id = $1 AND cc.is_deleted = false
+      ORDER BY cc.created_at ASC
+    `, [req.params.id, userId]);
+
+    res.json({ ...post, comments });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/community/posts/:id/comments — JWT 인증 필수
+app.post('/api/community/posts/:id/comments', async (req, res) => {
+  const user = extractUser(req);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+  const { content, parent_id } = req.body;
+  if (!content?.trim()) return res.status(400).json({ error: 'content required' });
+  try {
+    const { rows: [u] } = await pool.query(`SELECT nickname FROM users WHERE id = $1`, [user.userId]);
+    const nickname = u?.nickname || '익명';
+
+    const { rows } = await pool.query(`
+      INSERT INTO community_comments (post_id, parent_id, content, nickname, user_id)
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING *
+    `, [req.params.id, parent_id || null, content.trim(), nickname, user.userId]);
+
+    // Update comment count
+    await pool.query(
+      `UPDATE community_posts SET comment_count = (
+        SELECT count(*)::int FROM community_comments WHERE post_id = $1 AND is_deleted = false
+      ) WHERE id = $1`,
+      [req.params.id]
+    );
+
+    res.status(201).json(rows[0]);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/community/posts/:id/like — JWT 인증 필수
+app.post('/api/community/posts/:id/like', async (req, res) => {
+  const user = extractUser(req);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    await pool.query(
+      `INSERT INTO community_likes (post_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+      [req.params.id, user.userId]
+    );
+    await pool.query(
+      `UPDATE community_posts SET like_count = (
+        SELECT count(*)::int FROM community_likes WHERE post_id = $1
+      ) WHERE id = $1`,
+      [req.params.id]
+    );
+    const { rows: [{ like_count }] } = await pool.query(
+      `SELECT like_count FROM community_posts WHERE id = $1`,
+      [req.params.id]
+    );
+    res.json({ like_count, liked: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DELETE /api/community/posts/:id/like — JWT 인증 필수
+app.delete('/api/community/posts/:id/like', async (req, res) => {
+  const user = extractUser(req);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    await pool.query(
+      `DELETE FROM community_likes WHERE post_id = $1 AND user_id = $2`,
+      [req.params.id, user.userId]
+    );
+    await pool.query(
+      `UPDATE community_posts SET like_count = (
+        SELECT count(*)::int FROM community_likes WHERE post_id = $1
+      ) WHERE id = $1`,
+      [req.params.id]
+    );
+    const { rows: [{ like_count }] } = await pool.query(
+      `SELECT like_count FROM community_posts WHERE id = $1`,
+      [req.params.id]
+    );
+    res.json({ like_count, liked: false });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import type { LeaderboardItem } from '../types';
-import { formatWon } from '../utils/format';
+import { formatWon, abbreviateCity } from '../utils/format';
 
 interface Props {
   item: LeaderboardItem;
@@ -9,6 +9,8 @@ interface Props {
 
 export default function LeaderboardRow({ item, rank }: Props) {
   const nav = useNavigate();
+  const regionParts = [abbreviateCity(item.city), item.division, item.sector].filter(Boolean);
+  const regionText = regionParts.length > 0 ? regionParts.join(' ') : null;
 
   return (
     <div className="flex items-center gap-12 press-effect"
@@ -24,8 +26,12 @@ export default function LeaderboardRow({ item, rank }: Props) {
       </span>
       <div className="flex-1" style={{ minWidth: 0 }}>
         <div className="truncate" style={{ fontWeight: 600, fontSize: 14 }}>{item.complex_name}</div>
+        {regionText && (
+          <div style={{ fontSize: 11, color: 'var(--gray-400)', marginTop: 1 }}>{regionText}</div>
+        )}
         <div style={{ fontSize: 12, color: 'var(--gray-500)', marginTop: 2 }}>
-          급매 {item.bargain_count}건 · 전체 {item.total_count}건
+          급매 {item.bargain_count}건
+          {item.avg_bargain_score ? ` · 평균 ${item.avg_bargain_score}점` : ''}
           {item.avg_price ? ` · ${formatWon(item.avg_price)}` : ''}
         </div>
       </div>

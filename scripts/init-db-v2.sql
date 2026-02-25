@@ -265,7 +265,18 @@ CREATE TABLE alert_history (
 );
 
 -- ============================================
--- 8. updated_at 트리거
+-- 8. real_transactions에 complex_id FK 추가
+-- ============================================
+
+-- NOTE: real_transactions 테이블은 별도 생성/관리 (여기서는 ALTER만)
+-- ALTER TABLE real_transactions ADD COLUMN IF NOT EXISTS complex_id BIGINT;
+-- CREATE INDEX IF NOT EXISTS idx_rt_complex_id ON real_transactions(complex_id);
+-- CREATE INDEX IF NOT EXISTS idx_rt_complex_area_date
+--   ON real_transactions(complex_id, exclu_use_ar, deal_year, deal_month)
+--   WHERE complex_id IS NOT NULL;
+
+-- ============================================
+-- 9. updated_at 트리거
 -- ============================================
 
 CREATE OR REPLACE FUNCTION update_updated_at()

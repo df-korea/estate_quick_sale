@@ -6,14 +6,12 @@
  * Playwright headful 모드로 실행 (rate limit 없음, ~120ms/req).
  *
  * Modes:
- *   --full          전수 UPSERT (기본). 초기 로드/데이터 복구용.
- *   --quick         count 비교 → 변화 단지만 deep scan (~20분)
- *   --incremental   전수 diff scan + 삭제/가격변동 감지 (~35분)
+ *   (기본)          전수 diff scan + 삭제/가격변동 감지 (5병렬, ~25분)
+ *   --quick         count 비교 → 변화 단지만 deep scan
  *
  * Usage:
- *   node --env-file=.env scripts/collect-finland.mjs              # full (기본)
- *   node --env-file=.env scripts/collect-finland.mjs --quick      # 증분
- *   node --env-file=.env scripts/collect-finland.mjs --incremental # 전수 diff
+ *   node --env-file=.env scripts/collect-finland.mjs              # 전수 스캔 (기본)
+ *   node --env-file=.env scripts/collect-finland.mjs --quick      # 증분 (변화분만)
  *   node --env-file=.env scripts/collect-finland.mjs --resume     # 중단점부터
  *   node --env-file=.env scripts/collect-finland.mjs --limit 100  # 100개 단지만
  *   node --env-file=.env scripts/collect-finland.mjs --hscp 22627 # 단일 단지
@@ -41,8 +39,7 @@ const LIMIT = getArg('limit') ? parseInt(getArg('limit')) : null;
 const RESUME = hasFlag('resume');
 const MODE = SINGLE_HSCP ? 'single'
   : hasFlag('quick') ? 'quick'
-  : hasFlag('incremental') ? 'incremental'
-  : 'full';
+  : 'incremental';
 
 // ── Paths ──
 
@@ -135,8 +132,7 @@ async function fetchArticles(page, complexNumber, lastInfo = [], size = 30) {
 
 async function batchCountCheck(page, hscpNos) {
   return await page.evaluate(async (hscpNos) => {
-    const results = [];
-    for (const hscpNo of hscpNos) {
+    return await Promise.all(hscpNos.map(async (hscpNo) => {
       try {
         const res = await fetch('/front-api/v1/complex/article/list', {
           method: 'POST',
@@ -151,21 +147,14 @@ async function batchCountCheck(page, hscpNos) {
             lastInfo: [],
           }),
         });
-        if (!res.ok) {
-          results.push({ hscpNo, totalCount: -1 });
-          continue;
-        }
+        if (!res.ok) return { hscpNo, totalCount: -1 };
         const data = await res.json();
-        if (!data.isSuccess) {
-          results.push({ hscpNo, totalCount: -1 });
-          continue;
-        }
-        results.push({ hscpNo, totalCount: data.result?.totalCount || 0 });
+        if (!data.isSuccess) return { hscpNo, totalCount: -1 };
+        return { hscpNo, totalCount: data.result?.totalCount || 0 };
       } catch {
-        results.push({ hscpNo, totalCount: -1 });
+        return { hscpNo, totalCount: -1 };
       }
-    }
-    return results;
+    }));
   }, hscpNos);
 }
 
@@ -277,8 +266,17 @@ async function upsertArticle(client, a) {
       group_article_count = EXCLUDED.group_article_count,
       group_realtor_count = EXCLUDED.group_realtor_count,
       group_direct_trade_count = EXCLUDED.group_direct_trade_count,
-      is_bargain = EXCLUDED.is_bargain,
       bargain_keyword = EXCLUDED.bargain_keyword,
+      is_bargain = CASE
+        WHEN EXCLUDED.bargain_keyword IS NOT NULL THEN true
+        WHEN articles.bargain_type = 'price' OR articles.bargain_type = 'both' THEN true
+        ELSE false
+      END,
+      bargain_type = CASE
+        WHEN EXCLUDED.bargain_keyword IS NOT NULL AND articles.bargain_type = 'price' THEN 'both'
+        WHEN EXCLUDED.bargain_keyword IS NOT NULL THEN 'keyword'
+        ELSE articles.bargain_type
+      END,
       last_seen_at = NOW(),
       removed_at = NULL,
       raw_data = EXCLUDED.raw_data
@@ -341,81 +339,9 @@ async function backfillComplex(client, complexId, article) {
 // Per-complex collection functions
 // ══════════════════════════════════════════════════
 
-// ── collectComplexFull — 기본 수집 (diff 없음, 현행 동작) ──
+// ── collectComplex — 수집 + diff 감지 (삭제/가격변동) ──
 
-async function collectComplexFull(page, c, stats) {
-  let lastInfo = [];
-  let fetched = 0;
-  let totalCount = 0;
-  let complexArticles = 0;
-  let complexNew = 0;
-  let complexBargains = 0;
-  let pageNum = 0;
-
-  while (true) {
-    const result = await fetchArticles(page, c.hscp_no, lastInfo);
-    stats.requests++;
-    pageNum++;
-
-    if (!result.ok) {
-      if (fetched === 0) { stats.errors++; return null; }
-      break;
-    }
-
-    if (pageNum === 1) totalCount = result.totalCount;
-
-    const client = await pool.connect();
-    try {
-      for (const item of result.articles) {
-        const mapped = mapArticle(item, c.id);
-        const dbRow = await upsertArticle(client, mapped);
-
-        if (dbRow.is_new) complexNew++;
-        complexArticles++;
-
-        const phInserted = await insertPriceHistory(client, dbRow.id, mapped.price_changes, mapped.deal_price);
-        stats.priceHistoryInserted += phInserted;
-
-        if (mapped.is_bargain && dbRow.is_new) {
-          await client.query(`
-            INSERT INTO bargain_detections (article_id, complex_id, detection_type, keyword, deal_price)
-            VALUES ($1, $2, 'keyword', $3, $4)
-          `, [dbRow.id, c.id, mapped.bargain_keyword, mapped.deal_price]);
-          complexBargains++;
-        }
-
-        if (pageNum === 1 && result.articles.indexOf(item) === 0) {
-          await backfillComplex(client, c.id, mapped);
-        }
-      }
-    } finally {
-      client.release();
-    }
-
-    fetched += result.articles.length;
-    lastInfo = result.lastInfo || [];
-
-    if (!result.hasNextPage || result.articles.length === 0 ||
-        fetched >= totalCount || pageNum >= 100) break;
-  }
-
-  stats.scanned++;
-  stats.articlesFound += complexArticles;
-  stats.articlesNew += complexNew;
-  stats.articlesUpdated += (complexArticles - complexNew);
-  stats.bargainsDetected += complexBargains;
-
-  await pool.query(
-    `UPDATE complexes SET last_collected_at = NOW(), deal_count = $2 WHERE id = $1`,
-    [c.id, totalCount]
-  );
-
-  return { complexArticles, complexNew, complexBargains };
-}
-
-// ── collectComplexWithDiff — diff 감지 (삭제/가격변동 포함) ──
-
-async function collectComplexWithDiff(page, c, stats) {
+async function collectComplex(page, c, stats) {
   // 1. Pre-fetch: DB의 active 매물 목록 + 가격
   const { rows: dbArticles } = await pool.query(
     `SELECT article_no, deal_price FROM articles WHERE complex_id = $1 AND article_status = 'active'`,
@@ -531,44 +457,48 @@ async function collectComplexWithDiff(page, c, stats) {
 }
 
 // ══════════════════════════════════════════════════
-// Scan modes
+// Worker pattern (병렬 처리)
 // ══════════════════════════════════════════════════
 
-// ── runFullScan — 전수 UPSERT (기본, diff 없음) ──
+const CONCURRENCY = 5;
 
-async function runFullScan(page, stats) {
-  let whereClause = 'WHERE is_active = true';
-  let params = [];
+async function processWithWorkers(complexes, processFn, page, stats, label) {
+  let nextIdx = 0;
+  let doneCount = 0;
 
-  if (RESUME) {
-    const progress = loadProgress();
-    if (progress?.lastHscpNo) {
-      whereClause += ` AND hscp_no > $1`;
-      params.push(progress.lastHscpNo);
-      console.log(`이어서 수집: hscp_no > ${progress.lastHscpNo}`);
+  async function worker() {
+    while (true) {
+      const idx = nextIdx++;
+      if (idx >= complexes.length) break;
+      const c = complexes[idx];
+
+      const result = await processFn(page, c, stats);
+
+      doneCount++;
+      if (doneCount % 50 === 0 || doneCount === complexes.length) {
+        const elapsed = ((Date.now() - stats.startTime) / 1000).toFixed(1);
+        const rps = (stats.requests / Math.max(1, (Date.now() - stats.startTime) / 1000)).toFixed(1);
+        console.log(`[${label}] [${doneCount}/${complexes.length}] ${c.complex_name} (${c.hscp_no}) | ${result?.complexArticles || 0}건(+${result?.complexNew || 0}${result?.removedCount != null ? ', -' + result.removedCount : ''}${result?.complexPriceChanges ? ', Δ' + result.complexPriceChanges : ''}) | 누적: ${stats.articlesFound}건, ${elapsed}s, ${rps}req/s, 에러:${stats.errors}`);
+      }
+
+      // progress 저장 (50개마다, UPSERT라 중복 처리 무해)
+      if (doneCount % 50 === 0) {
+        saveProgress(c.hscp_no);
+      }
     }
   }
 
-  const { rows: complexes } = await pool.query(
-    `SELECT id, hscp_no, complex_name, deal_count FROM complexes
-     ${whereClause} ORDER BY hscp_no ASC ${LIMIT ? `LIMIT ${LIMIT}` : ''}`,
-    params
-  );
-  console.log(`수집 대상: ${complexes.length}개 단지\n`);
-  if (complexes.length === 0) return;
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, complexes.length) }, () => worker()));
 
-  for (let i = 0; i < complexes.length; i++) {
-    const c = complexes[i];
-    const result = await collectComplexFull(page, c, stats);
-    saveProgress(c.hscp_no);
-
-    if ((i + 1) % 50 === 0 || i === complexes.length - 1) {
-      const elapsed = ((Date.now() - stats.startTime) / 1000).toFixed(1);
-      const rps = (stats.requests / Math.max(1, (Date.now() - stats.startTime) / 1000)).toFixed(1);
-      console.log(`[${i + 1}/${complexes.length}] ${c.complex_name} (${c.hscp_no}) | ${result?.complexArticles || 0}건(+${result?.complexNew || 0}) | 누적: ${stats.articlesFound}건, ${stats.requests}req, ${elapsed}s, ${rps}req/s, 에러:${stats.errors}`);
-    }
+  // 마지막 progress 저장
+  if (complexes.length > 0) {
+    saveProgress(complexes[complexes.length - 1].hscp_no);
   }
 }
+
+// ══════════════════════════════════════════════════
+// Scan modes
+// ══════════════════════════════════════════════════
 
 // ── runQuickScan — count 비교 → 변화 단지만 deep scan ──
 
@@ -582,7 +512,7 @@ async function runQuickScan(page, stats) {
 
   const changedComplexes = [];
   const staleComplexes = [];
-  const BATCH_SIZE = 20;
+  const BATCH_SIZE = 30;
   const complexMap = new Map(complexes.map(c => [c.hscp_no, c]));
 
   for (let i = 0; i < complexes.length; i += BATCH_SIZE) {
@@ -624,16 +554,7 @@ async function runQuickScan(page, stats) {
     return;
   }
 
-  for (let i = 0; i < deepTargets.length; i++) {
-    const c = deepTargets[i];
-    const result = await collectComplexWithDiff(page, c, stats);
-
-    if ((i + 1) % 50 === 0 || i === deepTargets.length - 1) {
-      const elapsed = ((Date.now() - stats.startTime) / 1000).toFixed(1);
-      const rps = (stats.requests / Math.max(1, (Date.now() - stats.startTime) / 1000)).toFixed(1);
-      console.log(`[${i + 1}/${deepTargets.length}] ${c.complex_name} (${c.hscp_no}) | ${result?.complexArticles || 0}건(+${result?.complexNew || 0}, -${result?.removedCount || 0}, Δ${result?.complexPriceChanges || 0}) | ${elapsed}s, ${rps}req/s`);
-    }
-  }
+  await processWithWorkers(deepTargets, collectComplex, page, stats, 'quick-deep');
 }
 
 // ── runIncrementalScan — 전수 diff scan (삭제/가격변동 완전 감지) ──
@@ -653,23 +574,13 @@ async function runIncrementalScan(page, stats) {
 
   const { rows: complexes } = await pool.query(
     `SELECT id, hscp_no, complex_name, deal_count, last_collected_at
-     FROM complexes ${whereClause} ORDER BY hscp_no ASC`,
+     FROM complexes ${whereClause} ORDER BY hscp_no ASC ${LIMIT ? `LIMIT ${LIMIT}` : ''}`,
     params
   );
-  console.log(`수집 대상: ${complexes.length}개 단지 (incremental diff scan)\n`);
+  console.log(`수집 대상: ${complexes.length}개 단지 (${CONCURRENCY}병렬)\n`);
   if (complexes.length === 0) return;
 
-  for (let i = 0; i < complexes.length; i++) {
-    const c = complexes[i];
-    const result = await collectComplexWithDiff(page, c, stats);
-    saveProgress(c.hscp_no);
-
-    if ((i + 1) % 50 === 0 || i === complexes.length - 1) {
-      const elapsed = ((Date.now() - stats.startTime) / 1000).toFixed(1);
-      const rps = (stats.requests / Math.max(1, (Date.now() - stats.startTime) / 1000)).toFixed(1);
-      console.log(`[${i + 1}/${complexes.length}] ${c.complex_name} (${c.hscp_no}) | ${result?.complexArticles || 0}건(+${result?.complexNew || 0}, -${result?.removedCount || 0}, Δ${result?.complexPriceChanges || 0}) | 누적: ${stats.articlesFound}건, ${elapsed}s, ${rps}req/s, 에러:${stats.errors}`);
-    }
-  }
+  await processWithWorkers(complexes, collectComplex, page, stats, 'incremental');
 }
 
 // ══════════════════════════════════════════════════
@@ -739,16 +650,14 @@ async function main() {
         `SELECT id, hscp_no, complex_name, deal_count FROM complexes WHERE hscp_no = $1`,
         [SINGLE_HSCP]
       );
-      const result = await collectComplexWithDiff(page, c, stats);
+      const result = await collectComplex(page, c, stats);
       if (result) {
         console.log(`\n${c.complex_name}: ${result.complexArticles}건 (신규 ${result.complexNew}, 삭제 ${result.removedCount}, 가격변동 ${result.complexPriceChanges})`);
       }
     } else if (MODE === 'quick') {
       await runQuickScan(page, stats);
-    } else if (MODE === 'incremental') {
-      await runIncrementalScan(page, stats);
     } else {
-      await runFullScan(page, stats);
+      await runIncrementalScan(page, stats);
     }
 
     // collection_runs 업데이트
@@ -778,6 +687,23 @@ async function main() {
     console.log(`호가 이력:  ${stats.priceHistoryInserted}건`);
     console.log(`API 요청:   ${stats.requests}건`);
     console.log(`소요 시간:  ${totalTime}초`);
+
+    // 가격 급매 판정 자동 실행 (single 모드 제외)
+    if (MODE !== 'single') {
+      console.log('\n' + '='.repeat(50));
+      console.log('=== 가격 급매 판정 자동 실행 ===');
+      console.log('='.repeat(50));
+      try {
+        const { execFileSync } = await import('node:child_process');
+        execFileSync('node', ['--env-file=.env', 'scripts/detect-price-bargains.mjs'], {
+          cwd: process.cwd(),
+          stdio: 'inherit',
+          timeout: 300_000  // 5분 타임아웃
+        });
+      } catch (e) {
+        console.error('가격 급매 판정 실행 실패:', e.message);
+      }
+    }
 
   } finally {
     if (browser) try { await browser.close(); } catch { /* ignore */ }

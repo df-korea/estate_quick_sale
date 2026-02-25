@@ -4,10 +4,6 @@
       "command": "npx",
       "args": ["-y", "vercel-mcp@latest", "VERCEL_API_KEY=fEitYYL9RuAYCr4BGk0UBk54"]
     },
-    "supabase": {
-      "command": "npx",
-      "args": ["-y", "@supabase/mcp-server-supabase@latest", "--access-token", "sbp_8e611cd109f879a9463f26d8616f39d7c5af9600"]
-    },
     "playwright-mcp": {
       "command": "npx",
       "args": ["-y", "@playwright/mcp@latest", "--browser", "chromium"]

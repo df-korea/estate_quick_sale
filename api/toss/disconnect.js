@@ -11,6 +11,8 @@
  * 콘솔 테스트 시 userKey=0 으로 전달됨.
  */
 
+import { getPool } from '../_lib/db.js';
+
 const BASIC_AUTH_VALUE = process.env.TOSS_DISCONNECT_BASIC_AUTH || '';
 const ALLOWED_ORIGINS = [
   'https://apps-in-toss.toss.im',
@@ -27,9 +29,8 @@ function setCors(req, res) {
 }
 
 function verifyBasicAuth(authHeader) {
-  if (!BASIC_AUTH_VALUE) return true; // 미설정 시 스킵
+  if (!BASIC_AUTH_VALUE) return true;
   if (!authHeader || !authHeader.startsWith('Basic ')) return false;
-
   const decoded = Buffer.from(authHeader.slice(6), 'base64').toString();
   return decoded === BASIC_AUTH_VALUE;
 }
@@ -37,18 +38,15 @@ function verifyBasicAuth(authHeader) {
 export default async function handler(req, res) {
   setCors(req, res);
 
-  // Preflight OPTIONS
   if (req.method === 'OPTIONS') {
     return res.status(204).end();
   }
 
-  // Basic Auth 검증
   const authHeader = req.headers.authorization;
   if (!verifyBasicAuth(authHeader)) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  // GET / POST 둘 다 지원
   let userKey, referrer;
   if (req.method === 'GET') {
     userKey = req.query.userKey;
@@ -62,8 +60,43 @@ export default async function handler(req, res) {
 
   console.log(`[toss-disconnect] userKey=${userKey}, referrer=${referrer}`);
 
-  // TODO: 실제 세션/토큰 정리 로직 추가
-  // 예: Supabase에서 해당 userKey의 세션 삭제
+  // Skip DB cleanup for test calls (userKey=0)
+  if (userKey && userKey !== '0') {
+    try {
+      const pool = getPool();
+
+      // Find user
+      const { rows } = await pool.query(
+        `SELECT id FROM users WHERE toss_user_id = $1`,
+        [userKey]
+      );
+
+      if (rows.length > 0) {
+        const userId = rows[0].id;
+
+        // Anonymize community posts and comments
+        await pool.query(
+          `UPDATE community_posts SET nickname = '탈퇴한 사용자' WHERE user_id = $1`,
+          [userId]
+        );
+        await pool.query(
+          `UPDATE community_comments SET nickname = '탈퇴한 사용자' WHERE user_id = $1`,
+          [userId]
+        );
+
+        // Clear user tokens
+        await pool.query(
+          `UPDATE users SET toss_refresh_token = NULL WHERE id = $1`,
+          [userId]
+        );
+
+        console.log(`[toss-disconnect] cleaned up user ${userId} (${userKey})`);
+      }
+    } catch (e) {
+      console.error('[toss-disconnect] DB cleanup error:', e.message);
+      // Don't fail the callback — Toss expects 200
+    }
+  }
 
   return res.status(200).json({ success: true });
 }

@@ -44,6 +44,24 @@ export function relativeDate(dateStr: string | null | undefined): string {
   return `${Math.floor(days / 30)}개월 전`;
 }
 
+/** 거래유형별 가격 표시 (매매: deal_price, 전세: warranty_price, 월세: 보증금/월세) */
+export function formatTradePrice(
+  tradeType: string,
+  dealPrice: number | null | undefined,
+  warrantyPrice: number | null | undefined,
+  rentPrice: number | null | undefined,
+): string {
+  if (tradeType === 'B2' || tradeType === 'B3') {
+    const w = formatWon(warrantyPrice);
+    const r = rentPrice ? Math.round(Number(rentPrice) / 10_000).toLocaleString() : '0';
+    return `${w}/${r}만`;
+  }
+  if (tradeType === 'B1') {
+    return formatWon(warrantyPrice);
+  }
+  return formatWon(dealPrice);
+}
+
 /** 거래유형 코드 → 라벨 */
 export function tradeTypeLabel(code: string): string {
   switch (code) {
@@ -52,6 +70,18 @@ export function tradeTypeLabel(code: string): string {
     case 'B2': return '월세';
     default: return code;
   }
+}
+
+/** 시도명 축약 (서울특별시→서울, 경기도→경기) */
+export function abbreviateCity(city: string | null | undefined): string {
+  if (!city) return '';
+  return city
+    .replace('특별자치시', '')
+    .replace('특별자치도', '')
+    .replace('특별시', '')
+    .replace('광역시', '')
+    .replace('도', '')
+    .trim();
 }
 
 /** 변동률 포맷 (e.g. "+3.2%" / "-5.1%") */

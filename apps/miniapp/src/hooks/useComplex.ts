@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '../lib/api';
-import type { Complex, ComplexSearchResult, ComplexArticle } from '../types';
+import type { Complex, ComplexSearchResult, ComplexArticle, ComplexPyeongType, ComplexDong } from '../types';
 
 export function useComplexSearch(query: string) {
   const [results, setResults] = useState<ComplexSearchResult[]>([]);
@@ -40,20 +40,61 @@ export function useComplex(id: string | undefined) {
   return { data, loading };
 }
 
-export function useComplexArticles(complexId: string | undefined, tradeType = 'A1') {
+export function useComplexArticles(
+  complexId: string | undefined,
+  tradeType = 'A1',
+  sort = 'price_asc',
+  bargainOnly = false,
+  spaceName?: string,
+  dongName?: string,
+) {
   const [data, setData] = useState<ComplexArticle[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetch = useCallback(async () => {
     if (!complexId) return;
     setLoading(true);
+    const qs = new URLSearchParams({ tradeType, sort });
+    if (bargainOnly) qs.set('bargainOnly', 'true');
+    if (spaceName) qs.set('spaceName', spaceName);
+    if (dongName) qs.set('dongName', dongName);
     try {
-      setData(await apiFetch<ComplexArticle[]>(`/complexes/${complexId}/articles?tradeType=${tradeType}`));
+      setData(await apiFetch<ComplexArticle[]>(`/complexes/${complexId}/articles?${qs}`));
     } catch { /* ignore */ }
     setLoading(false);
-  }, [complexId, tradeType]);
+  }, [complexId, tradeType, sort, bargainOnly, spaceName, dongName]);
 
   useEffect(() => { fetch(); }, [fetch]);
 
   return { data, loading, refetch: fetch };
+}
+
+export function useComplexPyeongTypes(complexId: string | undefined) {
+  const [data, setData] = useState<ComplexPyeongType[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!complexId) { setData([]); setLoading(false); return; }
+    apiFetch<ComplexPyeongType[]>(`/complexes/${complexId}/pyeong-types`)
+      .then(setData)
+      .catch(() => setData([]))
+      .finally(() => setLoading(false));
+  }, [complexId]);
+
+  return { data, loading };
+}
+
+export function useComplexDongs(complexId: string | undefined) {
+  const [data, setData] = useState<ComplexDong[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!complexId) { setData([]); setLoading(false); return; }
+    apiFetch<ComplexDong[]>(`/complexes/${complexId}/dongs`)
+      .then(setData)
+      .catch(() => setData([]))
+      .finally(() => setLoading(false));
+  }, [complexId]);
+
+  return { data, loading };
 }

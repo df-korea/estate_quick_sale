@@ -7,7 +7,7 @@ export const pool = new Pool({
   database: process.env.PGDATABASE || 'estate_quick_sale',
   user: process.env.PGUSER || 'backjs',
   password: process.env.PGPASSWORD || '',
-  max: 5,
+  max: 10,
   connectionTimeoutMillis: 10000,
   idleTimeoutMillis: 30000,
 });

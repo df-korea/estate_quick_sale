@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { apiFetch } from '../lib/api';
-import type { PriceTrendItem, RealTransactionSummary } from '../types';
+import type { PriceTrendItem } from '../types';
 
 interface TrendParams {
   aptNm?: string;
@@ -25,24 +25,6 @@ export function usePriceTrend(params: TrendParams) {
       .catch(() => setData([]))
       .finally(() => setLoading(false));
   }, [params.aptNm, params.sggCd, params.excluUseAr, params.months]);
-
-  return { data, loading };
-}
-
-export function useTransactionSummary(params: { aptNm?: string; sggCd?: string }) {
-  const [data, setData] = useState<RealTransactionSummary[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const qs = new URLSearchParams();
-    if (params.aptNm) qs.set('aptNm', params.aptNm);
-    if (params.sggCd) qs.set('sggCd', params.sggCd);
-
-    apiFetch<RealTransactionSummary[]>(`/real-transactions/summary?${qs}`)
-      .then(setData)
-      .catch(() => setData([]))
-      .finally(() => setLoading(false));
-  }, [params.aptNm, params.sggCd]);
 
   return { data, loading };
 }

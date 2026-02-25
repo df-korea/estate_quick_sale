@@ -4,7 +4,7 @@
 - **프론트엔드**: React + TypeScript + Vite (토스 미니앱 WebView)
 - **UI**: 토스 디자인 토큰 기반 커스텀 CSS
 - **백엔드**: Express API 서버 + PostgreSQL
-- **DB**: 로컬 PostgreSQL 17 (localhost:5432, user=backjs, db=estate_quick_sale)
+- **DB**: Oracle Cloud VM PostgreSQL 17 (PGHOST 환경변수 참조, db=estate_quick_sale)
 - **배포**: Vercel
 - **데이터 수집**: 로컬 Node.js + Playwright (fin.land.naver.com API)
 
@@ -43,13 +43,11 @@
 
 ## 외부 서비스
 - **Vercel**: https://vercel.com/backs-projects-87a24f27/estate-quick-sale
-- **Supabase**: bwdopkjlbvvcmuuhjnxa (zoopzoop, ap-northeast-2)
 - **카카오 앱**: https://developers.kakao.com/console/app/1388597/config/platform-key
 
 ## 환경변수
 - `.env` 파일 참조 (git에 커밋하지 않음)
-- PGHOST, PGPORT, PGDATABASE, PGUSER, PGPASSWORD (로컬 PostgreSQL)
-- VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY (프론트엔드)
+- PGHOST, PGPORT, PGDATABASE, PGUSER, PGPASSWORD (Oracle Cloud VM PostgreSQL)
 
 ---
 
@@ -62,5 +60,4 @@
 
 **공식 문서:**
 - [토스 앱인토스 개발자 문서](https://developers-apps-in-toss.toss.im/)
-- [Supabase 문서](https://supabase.com/docs)
 - [카카오 개발자 문서](https://developers.kakao.com/docs)

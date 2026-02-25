@@ -18,6 +18,7 @@ const SORT_OPTIONS: { value: BargainSort; label: string }[] = [
   { value: 'newest', label: '최신순' },
   { value: 'price_asc', label: '낮은가격순' },
   { value: 'price_desc', label: '높은가격순' },
+  { value: 'score_desc', label: '점수순' },
 ];
 
 export default function FilterBar({ tradeFilter, onTradeFilterChange, sort, onSortChange }: Props) {

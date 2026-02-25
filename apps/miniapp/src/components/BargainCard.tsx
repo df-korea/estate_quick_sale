@@ -1,7 +1,8 @@
 import { useNavigate } from 'react-router-dom';
 import type { BargainArticle } from '../types';
-import { formatWon, relativeDate, tradeTypeLabel } from '../utils/format';
+import { formatTradePrice, relativeDate, tradeTypeLabel } from '../utils/format';
 import BargainBadge from './BargainBadge';
+import ScoreBreakdownPopover from './ScoreBreakdownPopover';
 
 interface Props {
   item: BargainArticle;
@@ -18,7 +19,12 @@ export default function BargainCard({ item }: Props) {
           <span className={`badge ${item.trade_type === 'A1' ? 'badge--blue' : item.trade_type === 'B1' ? 'badge--green' : 'badge--orange'}`}>
             {tradeTypeLabel(item.trade_type)}
           </span>
-          <BargainBadge keyword={item.bargain_keyword} />
+          <BargainBadge keyword={item.bargain_keyword} bargainType={item.bargain_type} />
+          {item.bargain_score > 0 && (
+            <ScoreBreakdownPopover articleId={item.id} bargainScore={item.bargain_score} scoreFactors={item.score_factors}>
+              <span className="badge badge--gray">{item.bargain_score}점</span>
+            </ScoreBreakdownPopover>
+          )}
           {item.price_change_count > 0 && (
             <span className="badge badge--gray">인하 {item.price_change_count}회</span>
           )}
@@ -29,7 +35,7 @@ export default function BargainCard({ item }: Props) {
             {item.complex_name}
           </span>
           <span style={{ fontWeight: 700, fontSize: 15, color: 'var(--blue-600)', whiteSpace: 'nowrap', marginLeft: 8 }}>
-            {formatWon(item.deal_price)}
+            {formatTradePrice(item.trade_type, item.deal_price, item.warranty_price, item.rent_price)}
           </span>
         </div>
 

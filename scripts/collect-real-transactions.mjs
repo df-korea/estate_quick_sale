@@ -31,7 +31,7 @@ const SERVICE_KEY = 'c0f54f9f3d2354efe7d3dbcf4571fc687dd8694479df431de883391688a
 const BASE_URL = 'https://apis.data.go.kr/1613000/RTMSDataSvcAptTrade/getRTMSDataSvcAptTrade';
 const DAILY_LIMIT = 10000;
 const ROWS_PER_PAGE = 1000;
-const DELAY_MS = 1000;  // API 호출 간격
+const DELAY_MS = 0;  // API 호출 간격 (딜레이 없음)
 
 // ============================================
 // Args 파싱
@@ -173,12 +173,30 @@ function parseDealAmount(text) {
 async function upsertBatch(items) {
   if (!items.length) return { inserted: 0, skipped: 0 };
 
+  // 배치 내 중복 제거 (UNIQUE key 기준)
+  const seen = new Set();
+  const uniqueItems = [];
+  for (const item of items) {
+    const sggCd = String(item.sggCd || '').trim();
+    const aptNm = String(item.aptNm || '').trim();
+    const excluUseAr = parseFloat(String(item.excluUseAr || '').trim()) || 0;
+    const floor = parseInt(String(item.floor || '').trim()) || 0;
+    const dealYear = parseInt(item.dealYear) || 0;
+    const dealMonth = parseInt(item.dealMonth) || 0;
+    const dealDay = parseInt(String(item.dealDay || '').trim()) || 0;
+    const dealAmount = parseDealAmount(item.dealAmount);
+    const key = `${sggCd}|${aptNm}|${excluUseAr}|${dealYear}|${dealMonth}|${dealDay}|${floor}|${dealAmount}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    uniqueItems.push(item);
+  }
+
   // VALUES 절 구성
   const values = [];
   const params = [];
   let idx = 1;
 
-  for (const item of items) {
+  for (const item of uniqueItems) {
     const dealAmount = parseDealAmount(item.dealAmount);
     const sggCd = String(item.sggCd || '').trim();
     const aptNm = String(item.aptNm || '').trim();
@@ -190,7 +208,7 @@ async function upsertBatch(items) {
 
     if (!sggCd || !aptNm || !dealYear || !dealMonth) continue;
 
-    values.push(`($${idx},$${idx+1},$${idx+2},$${idx+3},$${idx+4},$${idx+5},$${idx+6},$${idx+7},$${idx+8},$${idx+9},$${idx+10},$${idx+11},$${idx+12},$${idx+13},$${idx+14},$${idx+15},$${idx+16},$${idx+17},$${idx+18},$${idx+19},$${idx+20})`);
+    values.push(`($${idx},$${idx+1},$${idx+2},$${idx+3},$${idx+4},$${idx+5},$${idx+6},$${idx+7},$${idx+8},$${idx+9},$${idx+10},$${idx+11},$${idx+12},$${idx+13},$${idx+14},$${idx+15},$${idx+16},$${idx+17},$${idx+18},$${idx+19},$${idx+20},(SELECT id FROM complexes WHERE sgg_cd=$${idx} AND rt_apt_nm=$${idx+3} AND is_active=true LIMIT 1))`);
     params.push(
       sggCd,
       String(item.umdNm || '').trim(),
@@ -224,10 +242,11 @@ async function upsertBatch(items) {
       (sgg_cd, umd_nm, jibun, apt_nm, apt_dong, exclu_use_ar, floor,
        build_year, deal_year, deal_month, deal_day, deal_amount, deal_amount_text,
        dealing_gbn, buyer_gbn, sler_gbn, estate_agent_sgg_nm,
-       cdeal_type, cdeal_day, land_leasehold_gbn, rgst_date)
+       cdeal_type, cdeal_day, land_leasehold_gbn, rgst_date, complex_id)
     VALUES ${values.join(',')}
     ON CONFLICT (sgg_cd, apt_nm, exclu_use_ar, deal_year, deal_month, deal_day, floor, deal_amount)
-    DO NOTHING
+    DO UPDATE SET complex_id = EXCLUDED.complex_id
+      WHERE real_transactions.complex_id IS NULL AND EXCLUDED.complex_id IS NOT NULL
   `, params);
 
   const inserted = result.rowCount;
