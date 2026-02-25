@@ -1,14 +1,19 @@
+import { useState } from 'react';
+
 interface Props {
   onLogin: () => Promise<void>;
   loading: boolean;
 }
 
 export default function IntroPage({ onLogin, loading }: Props) {
+  const [error, setError] = useState<string | null>(null);
+
   const handleLogin = async () => {
+    setError(null);
     try {
       await onLogin();
-    } catch {
-      // Login cancelled or failed — 토스 검수 요건: 로그인 창 닫으면 앱 종료 불필요 (재시도 허용)
+    } catch (e) {
+      setError(String(e instanceof Error ? e.message : e));
     }
   };
 
@@ -111,6 +116,19 @@ export default function IntroPage({ onLogin, loading }: Props) {
       >
         {loading ? '로그인 중...' : '토스로 시작하기'}
       </button>
+
+      {error && (
+        <p style={{
+          fontSize: 12,
+          color: 'var(--red-500)',
+          marginTop: 12,
+          textAlign: 'center',
+          maxWidth: 320,
+          wordBreak: 'break-all',
+        }}>
+          {error}
+        </p>
+      )}
 
       <p style={{
         fontSize: 11,

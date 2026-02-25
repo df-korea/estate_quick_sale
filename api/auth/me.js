@@ -1,7 +1,10 @@
 import { getPool } from '../_lib/db.js';
 import { extractUser } from '../_lib/jwt.js';
+import { setCors } from '../_lib/cors.js';
 
 export default async function handler(req, res) {
+  if (setCors(req, res)) return;
+
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
