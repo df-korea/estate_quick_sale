@@ -4,7 +4,7 @@ interface Props {
 }
 
 export default function BargainBadge({ keyword, bargainType }: Props) {
-  const badges: JSX.Element[] = [];
+  const badges: React.ReactElement[] = [];
 
   if (keyword) {
     badges.push(<span key="kw" className="badge badge--red">{keyword}</span>);

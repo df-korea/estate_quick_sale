@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useComplex, useComplexArticles, useComplexPyeongTypes, useComplexDongs } from '../hooks/useComplex';
 import { useMarketStats, useMarketAreaTypes, useMarketTrend, useMarketTransactions, useMarketFloorAnalysis } from '../hooks/useMarketPrices';
 import { useWatchlist } from '../hooks/useWatchlist';
-import { formatWon, formatPrice, formatTradePrice, formatArea, relativeDate } from '../utils/format';
+import { formatPrice, formatTradePrice, formatArea, relativeDate } from '../utils/format';
 import { extent, linearScale } from '../utils/chart';
 import LoadingSpinner from '../components/LoadingSpinner';
 import EmptyState from '../components/EmptyState';
