@@ -14,36 +14,33 @@ interface Props {
   sigunguName: string;
 }
 
+let _kakaoPromise: Promise<void> | null = null;
+
 function loadKakaoMaps(): Promise<void> {
-  return new Promise((resolve, reject) => {
+  if (_kakaoPromise) return _kakaoPromise;
+  _kakaoPromise = new Promise<void>((resolve, reject) => {
     if (window.kakao?.maps?.Map) { resolve(); return; }
-    if (window.kakao?.maps) {
-      window.kakao.maps.load(() => resolve());
-      return;
-    }
-    // Dynamic script fallback
-    const existing = document.querySelector('script[src*="dapi.kakao.com"]');
-    if (!existing) {
-      const script = document.createElement('script');
-      script.src = 'https://dapi.kakao.com/v2/maps/sdk.js?appkey=405aeb3782bea91f07f42d1bae32efd8&libraries=clusterer&autoload=false';
-      script.onload = () => {
-        if (window.kakao?.maps) window.kakao.maps.load(() => resolve());
-        else reject(new Error('Kakao SDK loaded but maps unavailable'));
-      };
-      script.onerror = () => reject(new Error('Failed to load Kakao Maps SDK'));
-      document.head.appendChild(script);
-    } else {
-      // Script exists but not loaded yet - wait
-      const timer = setInterval(() => {
-        if (window.kakao?.maps) {
-          clearInterval(timer);
-          if (window.kakao.maps.Map) resolve();
-          else window.kakao.maps.load(() => resolve());
-        }
-      }, 100);
-      setTimeout(() => { clearInterval(timer); reject(new Error('Kakao Maps load timeout')); }, 10000);
-    }
+
+    // Poll for kakao.maps.Map to be available (script in index.html with autoload=false)
+    const start = Date.now();
+    const poll = setInterval(() => {
+      if (window.kakao?.maps?.Map) {
+        clearInterval(poll);
+        resolve();
+      } else if (window.kakao?.maps?.load) {
+        clearInterval(poll);
+        window.kakao.maps.load(() => {
+          if (window.kakao?.maps?.Map) resolve();
+          else reject(new Error('Kakao maps.load() completed but Map unavailable'));
+        });
+      } else if (Date.now() - start > 15000) {
+        clearInterval(poll);
+        _kakaoPromise = null; // allow retry
+        reject(new Error('Kakao Maps load timeout'));
+      }
+    }, 200);
   });
+  return _kakaoPromise;
 }
 
 export default function KakaoComplexMap({ complexes, sigunguName }: Props) {

@@ -15,6 +15,7 @@ import CommunityPage from './pages/CommunityPage';
 import CommunityPostPage from './pages/CommunityPostPage';
 import CommunityWritePage from './pages/CommunityWritePage';
 import IntroPage from './pages/IntroPage';
+import NotificationSettingsPage from './pages/NotificationSettingsPage';
 
 export default function App() {
   const auth = useAuth();
@@ -41,6 +42,7 @@ export default function App() {
           <Route path="/search" element={<SearchPage />} />
           <Route path="/watchlist" element={<WatchlistPage />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/settings/notifications" element={<NotificationSettingsPage />} />
           <Route path="/article/:id" element={<ArticleDetailPage />} />
           <Route path="/complex/:id" element={<ComplexDetailPage />} />
           <Route path="/community" element={<CommunityPage />} />

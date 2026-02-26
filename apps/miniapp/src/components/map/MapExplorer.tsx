@@ -7,7 +7,6 @@ import KakaoComplexMap from './KakaoComplexMap';
 import ComplexList from './ComplexList';
 import MapLegend from './MapLegend';
 import Breadcrumb from '../Breadcrumb';
-import PinchZoomWrapper from './PinchZoomWrapper';
 import LoadingSpinner from '../LoadingSpinner';
 
 const BARGAIN_MODES: { value: BargainMode; label: string }[] = [
@@ -97,25 +96,21 @@ export default function MapExplorer({ onDrillChange, onBargainModeChange }: Prop
       {/* Sido → click goes directly to sigungu */}
       {drillLevel === 'sido' && (
         sidoLoading ? <LoadingSpinner /> : (
-          <PinchZoomWrapper>
-            <SidoMap
-              heatmap={sidoHeatmap}
-              onSelect={(sidoName) => navigateTo('sigungu', sidoName, null)}
-            />
-          </PinchZoomWrapper>
+          <SidoMap
+            heatmap={sidoHeatmap}
+            onSelect={(sidoName) => navigateTo('sigungu', sidoName, null)}
+          />
         )
       )}
 
       {/* Sigungu → click goes directly to complex */}
       {drillLevel === 'sigungu' && selectedSido && (
         sigunguLoading ? <LoadingSpinner /> : (
-          <PinchZoomWrapper>
-            <SigunguMap
-              sidoName={selectedSido}
-              heatmap={sigunguHeatmap}
-              onSelect={(sggName) => navigateTo('complex', selectedSido, sggName)}
-            />
-          </PinchZoomWrapper>
+          <SigunguMap
+            sidoName={selectedSido}
+            heatmap={sigunguHeatmap}
+            onSelect={(sggName) => navigateTo('complex', selectedSido, sggName)}
+          />
         )
       )}
 

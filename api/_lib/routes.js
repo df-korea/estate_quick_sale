@@ -100,6 +100,10 @@ const routes = [
   { m: 'GET', p: '/stats', h: handleStats },
   { m: 'GET', p: '/districts', h: handleDistricts },
 
+  // Users
+  { m: 'GET', p: '/users/profile', h: handleGetProfile },
+  { m: 'PUT', p: '/users/nickname', h: handleUpdateNickname },
+
   // Community
   { m: 'GET', p: '/community/posts/:id/comments', h: handleCommunityPostDetail }, // redirect
   { m: 'POST', p: '/community/posts/:id/comments', h: handleCommunityAddComment },
@@ -1340,6 +1344,68 @@ async function handleDistricts(_req, res) {
     ORDER BY division
   `);
   res.json(rows.map(r => r.district));
+}
+
+// ════════════════════════════════════════
+// Users
+// ════════════════════════════════════════
+
+async function handleGetProfile(req, res) {
+  const pool = getPool();
+  const user = extractUser(req);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+  const { rows } = await pool.query(
+    `SELECT id, nickname, nickname_changed_at, created_at FROM users WHERE id = $1`,
+    [user.userId]
+  );
+  if (rows.length === 0) return res.status(404).json({ error: 'User not found' });
+  res.json(rows[0]);
+}
+
+async function handleUpdateNickname(req, res) {
+  const pool = getPool();
+  const user = extractUser(req);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+  const { nickname } = req.body || {};
+  if (!nickname || typeof nickname !== 'string') {
+    return res.status(400).json({ error: '닉네임을 입력해주세요' });
+  }
+  const trimmed = nickname.trim();
+  if (trimmed.length < 2 || trimmed.length > 12) {
+    return res.status(400).json({ error: '닉네임은 2~12자여야 합니다' });
+  }
+
+  // Check 30-day restriction
+  const { rows: [me] } = await pool.query(
+    `SELECT nickname_changed_at FROM users WHERE id = $1`,
+    [user.userId]
+  );
+  if (me?.nickname_changed_at) {
+    const lastChanged = new Date(me.nickname_changed_at);
+    const nextAllowed = new Date(lastChanged.getTime() + 30 * 24 * 60 * 60 * 1000);
+    if (new Date() < nextAllowed) {
+      return res.status(400).json({
+        error: `닉네임 변경은 30일마다 가능합니다`,
+        next_change_at: nextAllowed.toISOString(),
+      });
+    }
+  }
+
+  // Check duplicate
+  const { rows: dup } = await pool.query(
+    `SELECT id FROM users WHERE nickname = $1 AND id != $2`,
+    [trimmed, user.userId]
+  );
+  if (dup.length > 0) {
+    return res.status(400).json({ error: '이미 사용 중인 닉네임입니다' });
+  }
+
+  await pool.query(
+    `UPDATE users SET nickname = $1, nickname_changed_at = NOW() WHERE id = $2`,
+    [trimmed, user.userId]
+  );
+  res.json({ nickname: trimmed });
 }
 
 // ════════════════════════════════════════

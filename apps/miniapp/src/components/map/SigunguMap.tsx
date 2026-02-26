@@ -7,6 +7,7 @@ import type { SigunguHeatmapItem } from '../../types';
 interface SggProps { name: string; code: string; name_eng: string; base_year: string }
 import { bargainRatioColor } from '../../utils/mapCodes';
 import topoData from '../../data/skorea-sigungu-topo.json';
+import { useSvgPanZoom } from '../../hooks/useSvgPanZoom';
 
 const WIDTH = 390;
 const HEIGHT = 500;
@@ -57,6 +58,7 @@ interface Props {
 }
 
 export default function SigunguMap({ sidoName, heatmap, onSelect }: Props) {
+  const { svgRef, viewBoxStr, onTouchStart, onTouchMove, onTouchEnd } = useSvgPanZoom(WIDTH, HEIGHT);
   const sidoCode = DB_TO_TOPO_CODE[sidoName];
   const view = sidoCode ? SIDO_VIEW[sidoCode] : null;
 
@@ -85,7 +87,14 @@ export default function SigunguMap({ sidoName, heatmap, onSelect }: Props) {
   const fontSize = 8;
 
   return (
-    <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} style={{ width: '100%', height: 'auto' }}>
+    <svg
+      ref={svgRef}
+      viewBox={viewBoxStr}
+      style={{ width: '100%', height: 'auto', touchAction: 'pan-y' }}
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
+    >
       {/* 시군구 지역 색칠 */}
       {filtered.map((feat, i) => {
         const name = feat.properties!.name;

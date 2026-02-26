@@ -7,6 +7,7 @@ import type { SidoHeatmapItem } from '../../types';
 interface SidoProps { name: string; code: string; name_eng: string }
 import { bargainRatioColor } from '../../utils/mapCodes';
 import topoData from '../../data/skorea-sido-topo.json';
+import { useSvgPanZoom } from '../../hooks/useSvgPanZoom';
 
 const WIDTH = 390;
 const HEIGHT = 500;
@@ -63,6 +64,8 @@ interface Props {
 }
 
 export default function SidoMap({ heatmap, onSelect }: Props) {
+  const { svgRef, viewBoxStr, onTouchStart, onTouchMove, onTouchEnd } = useSvgPanZoom(WIDTH, HEIGHT);
+
   const dataMap = useMemo(() => {
     const m = new Map<string, SidoHeatmapItem>();
     for (const item of heatmap) m.set(item.sido_name, item);
@@ -70,7 +73,14 @@ export default function SidoMap({ heatmap, onSelect }: Props) {
   }, [heatmap]);
 
   return (
-    <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} style={{ width: '100%', height: 'auto' }}>
+    <svg
+      ref={svgRef}
+      viewBox={viewBoxStr}
+      style={{ width: '100%', height: 'auto', touchAction: 'pan-y' }}
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
+    >
       {/* 지역 색칠 */}
       {geoFeatures.map((feat, i) => {
         const dbName = TOPO_TO_DB[feat.properties!.name] ?? feat.properties!.name;
