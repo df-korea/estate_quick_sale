@@ -37,7 +37,11 @@ export default async function handler(req, res) {
     const userKey = userRes?.success?.userKey;
     if (!userKey) {
       console.error('[auth/login] login-me failed:', userRes);
-      return res.status(401).json({ error: 'Failed to get user info', debug: userRes });
+      return res.status(401).json({
+        error: 'Failed to get user info',
+        debug: userRes,
+        tokenPreview: `${typeof accessToken}[${String(accessToken).length}] ${String(accessToken).slice(0, 30)}...`,
+      });
     }
 
     // 3. UPSERT user
