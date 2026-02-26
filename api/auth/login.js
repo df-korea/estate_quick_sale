@@ -34,23 +34,46 @@ export default async function handler(req, res) {
     const userRes = await getWithMtls(`${AUTH_BASE}/login-me`, {
       Authorization: `Bearer ${accessToken}`,
     });
-    const userKey = userRes?.success?.userKey;
+    const userInfo = userRes?.success;
+    const userKey = userInfo?.userKey;
     if (!userKey) {
       console.error('[auth/login] login-me failed:', userRes);
       return res.status(401).json({ error: 'Failed to get user info' });
     }
 
-    // 3. UPSERT user
+    // 3. UPSERT user with all info from login-me
     const pool = getPool();
     const { rows } = await pool.query(`
-      INSERT INTO users (toss_user_id, toss_refresh_token, last_login_at)
-      VALUES ($1, $2, NOW())
+      INSERT INTO users (toss_user_id, toss_refresh_token, toss_name, toss_birthday, toss_gender, phone, toss_ci, toss_di, last_login_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
       ON CONFLICT (toss_user_id) DO UPDATE SET
         toss_refresh_token = $2,
+        toss_name = COALESCE($3, users.toss_name),
+        toss_birthday = COALESCE($4, users.toss_birthday),
+        toss_gender = COALESCE($5, users.toss_gender),
+        phone = COALESCE($6, users.phone),
+        toss_ci = COALESCE($7, users.toss_ci),
+        toss_di = COALESCE($8, users.toss_di),
         last_login_at = NOW()
       RETURNING id, toss_user_id, nickname, toss_name, toss_birthday, toss_gender, phone, profile_image_url
-    `, [String(userKey), refreshToken]);
+    `, [
+      String(userKey),
+      refreshToken,
+      userInfo.name || null,
+      userInfo.birthday || null,
+      userInfo.gender || null,
+      userInfo.phone || null,
+      userInfo.ci || null,
+      userInfo.di || null,
+    ]);
     const user = rows[0];
+
+    // Set default nickname if not set
+    if (!user.nickname) {
+      const defaultNickname = `유저${String(user.id).padStart(4, '0')}`;
+      await pool.query(`UPDATE users SET nickname = $1 WHERE id = $2 AND nickname IS NULL`, [defaultNickname, user.id]);
+      user.nickname = defaultNickname;
+    }
 
     // 4. Sign JWT
     const token = signJwt({
