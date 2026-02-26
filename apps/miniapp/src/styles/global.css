@@ -114,8 +114,7 @@ img { display: block; max-width: 100%; }
   background: var(--white);
   overflow-y: auto;
   overflow-x: hidden;
-  position: relative;
-  transform: translateZ(0);
+  -webkit-overflow-scrolling: touch;
 }
 
 @media (min-width: 768px) {
