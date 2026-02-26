@@ -695,7 +695,7 @@ async function main() {
       console.log('='.repeat(50));
       try {
         const { execFileSync } = await import('node:child_process');
-        execFileSync('node', ['--env-file=.env', 'scripts/detect-price-bargains.mjs'], {
+        execFileSync(process.execPath, ['--env-file=.env', 'scripts/detect-price-bargains.mjs'], {
           cwd: process.cwd(),
           stdio: 'inherit',
           timeout: 300_000  // 5분 타임아웃
