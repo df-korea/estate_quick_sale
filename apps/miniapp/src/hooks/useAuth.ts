@@ -2,9 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 
 const TOKEN_KEY = 'auth_token';
 const USER_KEY = 'auth_user';
-const API_BASE = import.meta.env.PROD
-  ? 'https://estate-quick-sale-backs-projects-87a24f27.vercel.app'
-  : '';
+const API_BASE = '';
 
 interface AuthUser {
   userId: number;
@@ -18,6 +16,7 @@ interface AuthState {
   token: string | null;
   loading: boolean;
   login: () => Promise<void>;
+  loginAsGuest: () => void;
   logout: () => Promise<void>;
 }
 
@@ -31,9 +30,9 @@ export function useAuth(): AuthState {
   });
   const [loading, setLoading] = useState(false);
 
-  // Verify token on mount
+  // Verify token on mount (skip for guest)
   useEffect(() => {
-    if (!token) return;
+    if (!token || token === 'guest') return;
     fetch(`${API_BASE}/api/auth/me`, {
       headers: { Authorization: `Bearer ${token}` },
     }).then(res => {
@@ -106,6 +105,14 @@ export function useAuth(): AuthState {
     }
   }, []);
 
+  const loginAsGuest = useCallback(() => {
+    const guestUser: AuthUser = { userId: 0, userKey: 'guest', nickname: '게스트' };
+    localStorage.setItem(TOKEN_KEY, 'guest');
+    localStorage.setItem(USER_KEY, JSON.stringify(guestUser));
+    setToken('guest');
+    setUser(guestUser);
+  }, []);
+
   const logout = useCallback(async () => {
     try {
       if (token) {
@@ -129,6 +136,7 @@ export function useAuth(): AuthState {
     token,
     loading,
     login,
+    loginAsGuest,
     logout,
   };
 }
