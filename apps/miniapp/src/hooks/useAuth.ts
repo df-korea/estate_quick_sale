@@ -2,7 +2,9 @@ import { useState, useEffect, useCallback } from 'react';
 
 const TOKEN_KEY = 'auth_token';
 const USER_KEY = 'auth_user';
-const API_BASE = '';
+const API_BASE = import.meta.env.DEV
+  ? ''
+  : 'https://estate-quick-sale.vercel.app';
 
 interface AuthUser {
   userId: number;

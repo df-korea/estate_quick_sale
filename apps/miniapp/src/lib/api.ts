@@ -1,6 +1,8 @@
 import { getAuthToken } from '../hooks/useAuth';
 
-const API_BASE = '/api';
+const API_BASE = import.meta.env.DEV
+  ? '/api'
+  : 'https://estate-quick-sale.vercel.app/api';
 
 function authHeaders(): Record<string, string> {
   const token = getAuthToken();
