@@ -27,7 +27,7 @@ export default async function handler(req, res) {
     const refreshToken = tokenRes?.success?.refreshToken;
     if (!accessToken) {
       console.error('[auth/login] generate-token failed:', tokenRes);
-      return res.status(401).json({ error: 'Failed to get access token' });
+      return res.status(401).json({ error: 'Failed to get access token', debug: tokenRes });
     }
 
     // 2. Get user info
@@ -37,7 +37,7 @@ export default async function handler(req, res) {
     const userKey = userRes?.success?.userKey;
     if (!userKey) {
       console.error('[auth/login] login-me failed:', userRes);
-      return res.status(401).json({ error: 'Failed to get user info' });
+      return res.status(401).json({ error: 'Failed to get user info', debug: userRes });
     }
 
     // 3. UPSERT user
@@ -66,6 +66,6 @@ export default async function handler(req, res) {
     });
   } catch (e) {
     console.error('[auth/login] error:', e);
-    return res.status(500).json({ error: 'Login failed' });
+    return res.status(500).json({ error: e.message, debug: e.body || null });
   }
 }
