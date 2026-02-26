@@ -13,7 +13,6 @@ import SectionHeader from '../components/SectionHeader';
 import LeaderboardRow from '../components/LeaderboardRow';
 import TopPriceDropRow from '../components/TopPriceDropRow';
 import LoadingSpinner from '../components/LoadingSpinner';
-import AlgorithmModal from '../components/AlgorithmModal';
 import ScoreBreakdownPopover from '../components/ScoreBreakdownPopover';
 
 export default function HomePage() {
@@ -24,7 +23,7 @@ export default function HomePage() {
   const [leaderboardMode, setLeaderboardMode] = useState<string>('all');
 
   const { data: briefing } = useBriefing();
-  const { data: bargains, loading: bargainsLoading, refetch } = useFilteredBargains({
+  const { data: bargains, loading: bargainsLoading } = useFilteredBargains({
     sort,
     district,
     city,
@@ -34,7 +33,6 @@ export default function HomePage() {
   const { data: leaderboard } = useLeaderboard(10, leaderboardMode);
   const { data: topPriceDrops } = useTopPriceDrops(10);
   const [dongRankingMode, setDongRankingMode] = useState<BargainMode>('keyword');
-  const [showAlgoModal, setShowAlgoModal] = useState(false);
   const { data: dongRankings, loading: dongLoading } = useDongRankings(10, dongRankingMode);
 
   const handleDrillChange = useCallback((level: DrillLevel, sido: string | null, sigungu: string | null) => {
@@ -55,23 +53,7 @@ export default function HomePage() {
 
   return (
     <div className="page">
-      {/* Brand Header */}
-      <div className="page-header glass">
-        <h1>부동산 급매 레이더</h1>
-        <div className="flex items-center gap-8">
-          <button onClick={() => setShowAlgoModal(true)} className="press-effect" style={{
-            width: 24, height: 24, borderRadius: '50%', background: 'var(--gray-100)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 13, fontWeight: 700, color: 'var(--gray-500)',
-          }}>?</button>
-          <button onClick={() => refetch()} className="press-effect" style={{ padding: '4px 8px', color: 'var(--blue-500)', fontSize: 13, fontWeight: 600 }}>
-            새로고침
-          </button>
-        </div>
-      </div>
-      <AlgorithmModal open={showAlgoModal} onClose={() => setShowAlgoModal(false)} />
-
-      <div className="page-content">
+      <div className="page-content" style={{ paddingTop: 8 }}>
         {/* Briefing Bar */}
         {summary && (
           <div className="flex gap-8 scroll-x animate-fade-in" style={{ marginBottom: 16, alignItems: 'center' }}>

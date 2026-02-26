@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState } from 'react';
 import type { DrillLevel, BargainMode } from '../../types';
 import { useSidoHeatmap, useSigunguHeatmap, useSigunguComplexes } from '../../hooks/useMapData';
 import SidoMap from './SidoMap';
@@ -8,6 +8,7 @@ import ComplexList from './ComplexList';
 import MapLegend from './MapLegend';
 import Breadcrumb from '../Breadcrumb';
 import LoadingSpinner from '../LoadingSpinner';
+import AlgorithmModal from '../AlgorithmModal';
 
 const BARGAIN_MODES: { value: BargainMode; label: string }[] = [
   { value: 'all', label: '전체' },
@@ -25,6 +26,7 @@ export default function MapExplorer({ onDrillChange, onBargainModeChange }: Prop
   const [selectedSido, setSelectedSido] = useState<string | null>(null);
   const [selectedSigungu, setSelectedSigungu] = useState<string | null>(null);
   const [bargainMode, setBargainMode] = useState<BargainMode>('all');
+  const [showAlgoModal, setShowAlgoModal] = useState(false);
 
   const { data: sidoHeatmap, loading: sidoLoading } = useSidoHeatmap(bargainMode);
   const { data: sigunguHeatmap, loading: sigunguLoading } = useSigunguHeatmap(selectedSido, bargainMode);
@@ -54,9 +56,42 @@ export default function MapExplorer({ onDrillChange, onBargainModeChange }: Prop
               {m.label}
             </button>
           ))}
-          <HelpButton />
+          <button
+            onClick={() => setShowAlgoModal(true)}
+            style={{
+              width: 36,
+              height: 36,
+              borderRadius: '50%',
+              border: 'none',
+              background: 'transparent',
+              color: 'var(--gray-500)',
+              fontSize: 12,
+              fontWeight: 700,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+              flexShrink: 0,
+              padding: 0,
+              margin: '-7px',
+            }}
+            aria-label="급매 기준 도움말"
+          >
+            <span style={{
+              width: 22,
+              height: 22,
+              borderRadius: '50%',
+              border: '1.5px solid var(--gray-300)',
+              background: 'var(--white)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}>?</span>
+          </button>
         </div>
       )}
+
+      <AlgorithmModal open={showAlgoModal} onClose={() => setShowAlgoModal(false)} />
 
       {drillLevel !== 'sido' && (
         <button
@@ -146,118 +181,6 @@ export default function MapExplorer({ onDrillChange, onBargainModeChange }: Prop
       )}
 
       {(drillLevel === 'sido' || drillLevel === 'sigungu') && <MapLegend />}
-    </div>
-  );
-}
-
-function HelpButton() {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [open]);
-
-  const handleToggle = () => {
-    setOpen(v => !v);
-  };
-
-  return (
-    <div ref={ref} style={{ position: 'relative', marginLeft: 2 }}>
-      <button
-        onClick={handleToggle}
-        style={{
-          width: 36,
-          height: 36,
-          borderRadius: '50%',
-          border: 'none',
-          background: 'transparent',
-          color: 'var(--gray-500)',
-          fontSize: 12,
-          fontWeight: 700,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          cursor: 'pointer',
-          flexShrink: 0,
-          padding: 0,
-          margin: '-7px',
-        }}
-        aria-label="급매 기준 도움말"
-      >
-        <span style={{
-          width: 22,
-          height: 22,
-          borderRadius: '50%',
-          border: '1.5px solid var(--gray-300)',
-          background: open ? 'var(--gray-100)' : 'var(--white)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}>?</span>
-      </button>
-      {open && (
-        <div style={{
-          position: 'absolute',
-          top: '100%',
-          right: 0,
-          marginTop: 8,
-          width: Math.min(280, window.innerWidth - 32),
-          background: 'var(--white)',
-          borderRadius: 'var(--radius-md, 12px)',
-          boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
-          padding: '14px 16px',
-          zIndex: 1000,
-          fontSize: 13,
-          lineHeight: 1.6,
-          color: 'var(--gray-700)',
-        }}>
-          <div style={{ fontWeight: 700, marginBottom: 8, fontSize: 14 }}>급매 판별 기준</div>
-          <div style={{ marginBottom: 10 }}>
-            <span style={{
-              display: 'inline-block',
-              background: 'var(--red-500, #f04452)',
-              color: '#fff',
-              borderRadius: 4,
-              padding: '1px 6px',
-              fontSize: 11,
-              fontWeight: 700,
-              marginRight: 6,
-            }}>키워드</span>
-            매물 설명에 아래 키워드 포함
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
-              {['급매', '급처분', '급전', '급히', '마이너스피', '마피', '급급', '손절', '최저가', '급하게'].map(kw => (
-                <span key={kw} style={{
-                  padding: '2px 8px',
-                  background: 'var(--red-50, #fff1f2)',
-                  color: 'var(--red-500)',
-                  borderRadius: 12,
-                  fontSize: 11,
-                  fontWeight: 600,
-                }}>{kw}</span>
-              ))}
-            </div>
-          </div>
-          <div>
-            <span style={{
-              display: 'inline-block',
-              background: 'var(--orange-500, #f97316)',
-              color: '#fff',
-              borderRadius: 4,
-              padding: '1px 6px',
-              fontSize: 11,
-              fontWeight: 700,
-              marginRight: 6,
-            }}>가격</span>
-            알고리즘 분석 — 단지내 호가비교(40점), 실거래비교(35점), 인하횟수(20점), 누적인하율(5점). 합산 50점 이상
-          </div>
-        </div>
-      )}
     </div>
   );
 }

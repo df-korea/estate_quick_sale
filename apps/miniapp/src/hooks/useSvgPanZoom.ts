@@ -21,7 +21,7 @@ export function useSvgPanZoom(baseWidth: number, baseHeight: number) {
 
   const svgRef = useRef<SVGSVGElement | null>(null);
 
-  const currentScale = useCallback(() => baseWidth / viewBox.w, [viewBox.w, baseWidth]);
+  const scale = baseWidth / viewBox.w;
 
   const clampVB = useCallback((vb: ViewBox): ViewBox => {
     const w = Math.max(baseWidth / MAX_SCALE, Math.min(baseWidth, vb.w));
@@ -123,7 +123,7 @@ export function useSvgPanZoom(baseWidth: number, baseHeight: number) {
     onTouchStart,
     onTouchMove,
     onTouchEnd,
-    currentScale,
+    scale,
     isZoomed: viewBox.w < baseWidth - 1,
   };
 }

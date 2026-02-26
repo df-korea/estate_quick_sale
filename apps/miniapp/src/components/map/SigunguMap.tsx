@@ -58,7 +58,8 @@ interface Props {
 }
 
 export default function SigunguMap({ sidoName, heatmap, onSelect }: Props) {
-  const { svgRef, viewBoxStr, onTouchStart, onTouchMove, onTouchEnd } = useSvgPanZoom(WIDTH, HEIGHT);
+  const { svgRef, viewBoxStr, onTouchStart, onTouchMove, onTouchEnd, scale } = useSvgPanZoom(WIDTH, HEIGHT);
+  const inv = 1 / scale;
   const sidoCode = DB_TO_TOPO_CODE[sidoName];
   const view = sidoCode ? SIDO_VIEW[sidoCode] : null;
 
@@ -84,7 +85,7 @@ export default function SigunguMap({ sidoName, heatmap, onSelect }: Props) {
 
   if (!sidoCode || !view || !proj || !path) return null;
 
-  const fontSize = 8;
+  const baseFontSize = 8;
 
   return (
     <svg
@@ -122,7 +123,7 @@ export default function SigunguMap({ sidoName, heatmap, onSelect }: Props) {
           const name = feat.properties!.name;
           const item = dataMap.get(name);
           const count = item?.bargain_count ?? 0;
-          const r = bubbleRadius(count);
+          const r = bubbleRadius(count) * inv;
           const color = bargainRatioColor(item?.bargain_ratio ?? 0);
 
           const centroid = geoCentroid(feat);
@@ -132,20 +133,20 @@ export default function SigunguMap({ sidoName, heatmap, onSelect }: Props) {
 
           return (
             <g key={`m-${i}`} onClick={() => onSelect(name)} style={{ cursor: 'pointer' }} pointerEvents="auto">
-              <circle cx={cx} cy={cy} r={r} fill="white" stroke={color} strokeWidth={1.5} />
+              <circle cx={cx} cy={cy} r={r} fill="white" stroke={color} strokeWidth={1.5 * inv} />
               <text
-                x={cx} y={cy - r - 2}
+                x={cx} y={cy - r - 2 * inv}
                 textAnchor="middle"
-                style={{ fontSize, fontWeight: 800, fill: '#333' }}
+                style={{ fontSize: baseFontSize * inv, fontWeight: 800, fill: '#333' }}
               >
                 {name}
               </text>
               {count > 0 && (
                 <text
-                  x={cx} y={cy + 1}
+                  x={cx} y={cy + 1 * inv}
                   textAnchor="middle"
                   dominantBaseline="central"
-                  style={{ fontSize: fontSize * 0.85, fontWeight: 800, fill: '#e02020' }}
+                  style={{ fontSize: baseFontSize * 0.85 * inv, fontWeight: 800, fill: '#e02020' }}
                 >
                   {count.toLocaleString()}
                 </text>

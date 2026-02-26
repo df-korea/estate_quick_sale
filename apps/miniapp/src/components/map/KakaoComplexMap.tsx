@@ -19,23 +19,17 @@ let _kakaoPromise: Promise<void> | null = null;
 function loadKakaoMaps(): Promise<void> {
   if (_kakaoPromise) return _kakaoPromise;
   _kakaoPromise = new Promise<void>((resolve, reject) => {
+    // Script in index.html auto-loads (no autoload=false)
     if (window.kakao?.maps?.Map) { resolve(); return; }
 
-    // Poll for kakao.maps.Map to be available (script in index.html with autoload=false)
     const start = Date.now();
     const poll = setInterval(() => {
       if (window.kakao?.maps?.Map) {
         clearInterval(poll);
         resolve();
-      } else if (window.kakao?.maps?.load) {
-        clearInterval(poll);
-        window.kakao.maps.load(() => {
-          if (window.kakao?.maps?.Map) resolve();
-          else reject(new Error('Kakao maps.load() completed but Map unavailable'));
-        });
       } else if (Date.now() - start > 15000) {
         clearInterval(poll);
-        _kakaoPromise = null; // allow retry
+        _kakaoPromise = null;
         reject(new Error('Kakao Maps load timeout'));
       }
     }, 200);

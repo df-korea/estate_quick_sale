@@ -64,7 +64,8 @@ interface Props {
 }
 
 export default function SidoMap({ heatmap, onSelect }: Props) {
-  const { svgRef, viewBoxStr, onTouchStart, onTouchMove, onTouchEnd } = useSvgPanZoom(WIDTH, HEIGHT);
+  const { svgRef, viewBoxStr, onTouchStart, onTouchMove, onTouchEnd, scale } = useSvgPanZoom(WIDTH, HEIGHT);
+  const inv = 1 / scale; // inverse scale: keeps elements at constant screen size
 
   const dataMap = useMemo(() => {
     const m = new Map<string, SidoHeatmapItem>();
@@ -109,7 +110,7 @@ export default function SidoMap({ heatmap, onSelect }: Props) {
           const shortName = DB_TO_SHORT[dbName] ?? dbName;
           const item = dataMap.get(dbName);
           const count = item?.bargain_count ?? 0;
-          const r = bubbleRadius(count);
+          const r = bubbleRadius(count) * inv;
           const color = bargainRatioColor(item?.bargain_ratio ?? 0);
 
           const centroid = geoCentroid(feat);
@@ -121,20 +122,20 @@ export default function SidoMap({ heatmap, onSelect }: Props) {
 
           return (
             <g key={`m-${i}`} onClick={() => onSelect(dbName)} style={{ cursor: 'pointer' }} pointerEvents="auto">
-              <circle cx={cx} cy={cy} r={r} fill="white" stroke={color} strokeWidth={2} />
+              <circle cx={cx} cy={cy} r={r} fill="white" stroke={color} strokeWidth={2 * inv} />
               <text
-                x={cx} y={cy - r - 3}
+                x={cx} y={cy - r - 3 * inv}
                 textAnchor="middle"
-                style={{ fontSize: 10, fontWeight: 800, fill: '#333' }}
+                style={{ fontSize: 10 * inv, fontWeight: 800, fill: '#333' }}
               >
                 {shortName}
               </text>
               {count > 0 && (
                 <text
-                  x={cx} y={cy + 1}
+                  x={cx} y={cy + 1 * inv}
                   textAnchor="middle"
                   dominantBaseline="central"
-                  style={{ fontSize: 9, fontWeight: 800, fill: '#e02020' }}
+                  style={{ fontSize: 9 * inv, fontWeight: 800, fill: '#e02020' }}
                 >
                   {count.toLocaleString()}
                 </text>
