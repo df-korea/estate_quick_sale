@@ -9,8 +9,10 @@ export default function AdBanner() {
 
   return (
     <div style={{
-      position: 'sticky',
+      position: 'fixed',
       bottom: 'calc(var(--tab-height) + var(--safe-bottom))',
+      left: 0,
+      right: 0,
       zIndex: 199,
       height: 50,
       background: 'var(--gray-100)',

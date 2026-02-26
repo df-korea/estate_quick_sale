@@ -50,15 +50,42 @@ export function useAuth(): AuthState {
   const login = useCallback(async () => {
     setLoading(true);
     try {
-      const { appLogin } = await import('@apps-in-toss/web-framework');
-      const { authorizationCode, referrer } = await appLogin();
+      // Step 1: 동적 import
+      let appLogin: () => Promise<{ authorizationCode: string; referrer: string }>;
+      try {
+        const mod = await import('@apps-in-toss/web-framework');
+        appLogin = mod.appLogin;
+      } catch (e) {
+        throw new Error(`[import] ${e instanceof Error ? e.message : e}`);
+      }
 
-      const res = await fetch(`${API_BASE}/api/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ authorizationCode, referrer }),
-      });
-      if (!res.ok) throw new Error('Login failed');
+      // Step 2: 토스 네이티브 브릿지
+      let authorizationCode: string;
+      let referrer: string;
+      try {
+        const result = await appLogin();
+        authorizationCode = result.authorizationCode;
+        referrer = result.referrer;
+      } catch (e) {
+        throw new Error(`[appLogin] ${e instanceof Error ? e.message : e}`);
+      }
+
+      // Step 3: API 호출
+      let res: Response;
+      try {
+        res = await fetch(`${API_BASE}/api/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ authorizationCode, referrer }),
+        });
+      } catch (e) {
+        throw new Error(`[fetch] ${e instanceof Error ? e.message : e}`);
+      }
+
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        throw new Error(`[API ${res.status}] ${body || res.statusText}`);
+      }
 
       const data = await res.json();
       const authUser: AuthUser = {

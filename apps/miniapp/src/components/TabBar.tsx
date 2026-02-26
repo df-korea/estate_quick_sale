@@ -13,8 +13,10 @@ export default function TabBar() {
 
   return (
     <nav style={{
-      position: 'sticky',
+      position: 'fixed',
       bottom: 0,
+      left: 0,
+      right: 0,
       zIndex: 200,
       height: 'calc(var(--tab-height) + var(--safe-bottom))',
       paddingBottom: 'var(--safe-bottom)',

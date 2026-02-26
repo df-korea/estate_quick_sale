@@ -10,6 +10,7 @@ export default defineConfig({
   permissions: [],
   web: {
     port: 5173,
+    outdir: 'dist',
     commands: {
       dev: 'npx vite',
       build: 'npx vite build',

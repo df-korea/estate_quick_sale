@@ -67,7 +67,7 @@
 
   /* Safe area */
   --safe-top: env(safe-area-inset-top, 0px);
-  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-bottom: var(--toss-safe-area-bottom, env(safe-area-inset-bottom, 0px));
   --tab-height: 56px;
 }
 
@@ -120,6 +120,9 @@ img { display: block; max-width: 100%; }
 
 @media (min-width: 768px) {
   .mobile-frame {
+    max-width: 480px;
+    margin: 0 auto;
+  }
 }
 
 /* ── Layout Utils ── */
@@ -303,3 +306,7 @@ img { display: block; max-width: 100%; }
   animation: shimmer 1.5s infinite;
   border-radius: var(--radius-sm);
 }
+
+/* ── Toss WebView ── */
+.toss-webview .page-header { display: none; }
+.toss-webview .page { padding-top: 0; }

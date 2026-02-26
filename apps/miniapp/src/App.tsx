@@ -1,6 +1,8 @@
+import { useEffect } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import './styles/global.css';
 import { useAuth } from './hooks/useAuth';
+import { isTossWebView } from './lib/env';
 import TabBar from './components/TabBar';
 import AdBanner from './components/AdBanner';
 import HomePage from './pages/HomePage';
@@ -16,6 +18,12 @@ import IntroPage from './pages/IntroPage';
 
 export default function App() {
   const auth = useAuth();
+
+  useEffect(() => {
+    if (isTossWebView()) {
+      document.documentElement.classList.add('toss-webview');
+    }
+  }, []);
 
   if (!auth.isLoggedIn) {
     return (
