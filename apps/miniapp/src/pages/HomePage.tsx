@@ -14,6 +14,7 @@ import LeaderboardRow from '../components/LeaderboardRow';
 import TopPriceDropRow from '../components/TopPriceDropRow';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ScoreBreakdownPopover from '../components/ScoreBreakdownPopover';
+import InlineBannerAd from '../components/InlineBannerAd';
 
 export default function HomePage() {
   const [district, setDistrict] = useState<string | undefined>(undefined);
@@ -99,6 +100,9 @@ export default function HomePage() {
           </section>
         )}
 
+        {/* Ad: between rankings and leaderboard */}
+        <InlineBannerAd />
+
         {/* Leaderboard */}
         {leaderboard.length > 0 && (
           <section className="section animate-fade-in-up stagger-3">
@@ -139,6 +143,9 @@ export default function HomePage() {
             </div>
           </section>
         )}
+
+        {/* Ad: between price drops and bargain top 10 */}
+        <InlineBannerAd />
 
         {/* Bargain TOP 10 */}
         <section className="section animate-fade-in-up stagger-5">

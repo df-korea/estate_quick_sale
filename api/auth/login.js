@@ -2,6 +2,7 @@ import { postWithMtls, getWithMtls } from '../_lib/toss-mtls.js';
 import { getPool } from '../_lib/db.js';
 import { signJwt } from '../_lib/jwt.js';
 import { setCors } from '../_lib/cors.js';
+import { decryptTossValue } from '../_lib/toss-decrypt.js';
 
 const AUTH_BASE = '/api-partner/v1/apps-in-toss/user/oauth2';
 
@@ -41,7 +42,15 @@ export default async function handler(req, res) {
       return res.status(401).json({ error: 'Failed to get user info' });
     }
 
-    // 3. UPSERT user with all info from login-me
+    // 3. Decrypt user info from Toss (AES-256-GCM)
+    const decName = decryptTossValue(userInfo.name) || userInfo.name || null;
+    const decBirthday = decryptTossValue(userInfo.birthday) || userInfo.birthday || null;
+    const decGender = decryptTossValue(userInfo.gender) || userInfo.gender || null;
+    const decPhone = decryptTossValue(userInfo.phone) || userInfo.phone || null;
+    const decCi = userInfo.ci || null; // CI는 그대로 저장
+    const decDi = userInfo.di || null;
+
+    // 4. UPSERT user with decrypted info
     const pool = getPool();
     const { rows } = await pool.query(`
       INSERT INTO users (toss_user_id, toss_refresh_token, toss_name, toss_birthday, toss_gender, phone, toss_ci, toss_di, last_login_at)
@@ -59,18 +68,18 @@ export default async function handler(req, res) {
     `, [
       String(userKey),
       refreshToken,
-      userInfo.name || null,
-      userInfo.birthday || null,
-      userInfo.gender || null,
-      userInfo.phone || null,
-      userInfo.ci || null,
-      userInfo.di || null,
+      decName,
+      decBirthday,
+      decGender,
+      decPhone,
+      decCi,
+      decDi,
     ]);
     const user = rows[0];
 
-    // Set default nickname if not set
+    // Set default nickname if not set (use decrypted name if available)
     if (!user.nickname) {
-      const defaultNickname = `유저${String(user.id).padStart(4, '0')}`;
+      const defaultNickname = decName || `유저${String(user.id).padStart(4, '0')}`;
       await pool.query(`UPDATE users SET nickname = $1 WHERE id = $2 AND nickname IS NULL`, [defaultNickname, user.id]);
       user.nickname = defaultNickname;
     }

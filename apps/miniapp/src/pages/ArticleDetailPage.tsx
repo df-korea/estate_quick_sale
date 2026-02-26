@@ -10,6 +10,7 @@ import BargainScoreBadge from '../components/BargainScoreBadge';
 import PriceAssessment from '../components/PriceAssessment';
 import PriceTimeline from '../components/PriceTimeline';
 import LineChart from '../components/charts/LineChart';
+import InlineBannerAd from '../components/InlineBannerAd';
 
 export default function ArticleDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -142,6 +143,9 @@ export default function ArticleDetailPage() {
             단지 상세 보기
           </button>
         </div>
+
+        {/* Ad at bottom of article detail */}
+        <InlineBannerAd />
       </div>
     </div>
   );

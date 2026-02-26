@@ -4,7 +4,7 @@ import './styles/global.css';
 import { useAuth } from './hooks/useAuth';
 import { isTossWebView } from './lib/env';
 import TabBar from './components/TabBar';
-import AdBanner from './components/AdBanner';
+// AdBanner removed — replaced by InlineBannerAd in content areas
 import HomePage from './pages/HomePage';
 import SearchPage from './pages/SearchPage';
 import WatchlistPage from './pages/WatchlistPage';
@@ -49,7 +49,6 @@ export default function App() {
           <Route path="/community/:postId" element={<CommunityPostPage />} />
           <Route path="/community/write" element={<CommunityWritePage />} />
         </Routes>
-        <AdBanner />
         <TabBar />
       </div>
     </BrowserRouter>

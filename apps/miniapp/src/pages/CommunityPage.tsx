@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useCommunityPosts } from '../hooks/useCommunity';
 import CommunityPostCard from '../components/CommunityPostCard';
 import LoadingSpinner from '../components/LoadingSpinner';
+import InlineBannerAd from '../components/InlineBannerAd';
 
 export default function CommunityPage() {
   const nav = useNavigate();
@@ -62,9 +63,12 @@ export default function CommunityPage() {
           </span>
         </div>
 
-        {/* Posts list */}
-        {posts.map(post => (
-          <CommunityPostCard key={post.id} post={post} />
+        {/* Posts list with inline ads every 5 posts */}
+        {posts.map((post, i) => (
+          <div key={post.id}>
+            <CommunityPostCard post={post} />
+            {(i + 1) % 5 === 0 && <InlineBannerAd />}
+          </div>
         ))}
 
         {/* Infinite scroll sentinel */}
