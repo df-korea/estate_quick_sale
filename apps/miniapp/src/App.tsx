@@ -29,7 +29,7 @@ export default function App() {
   if (!auth.isLoggedIn) {
     return (
       <BrowserRouter>
-        <IntroPage onLogin={auth.login} onGuestLogin={auth.loginAsGuest} loading={auth.loading} />
+        <IntroPage onLogin={auth.login} loading={auth.loading} />
       </BrowserRouter>
     );
   }

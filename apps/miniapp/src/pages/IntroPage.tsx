@@ -2,11 +2,10 @@ import { useState } from 'react';
 
 interface Props {
   onLogin: () => Promise<void>;
-  onGuestLogin: () => void;
   loading: boolean;
 }
 
-export default function IntroPage({ onLogin, onGuestLogin, loading }: Props) {
+export default function IntroPage({ onLogin, loading }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   const handleLogin = async () => {
@@ -116,25 +115,6 @@ export default function IntroPage({ onLogin, onGuestLogin, loading }: Props) {
         }}
       >
         {loading ? '로그인 중...' : '토스로 시작하기'}
-      </button>
-
-      <button
-        onClick={onGuestLogin}
-        style={{
-          width: '100%',
-          maxWidth: 320,
-          padding: '14px 0',
-          background: 'transparent',
-          color: 'var(--gray-600)',
-          borderRadius: 12,
-          fontSize: 14,
-          fontWeight: 600,
-          border: '1px solid var(--gray-200)',
-          cursor: 'pointer',
-          marginTop: 10,
-        }}
-      >
-        로그인 없이 둘러보기
       </button>
 
       {error && (
