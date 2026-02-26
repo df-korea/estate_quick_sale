@@ -37,7 +37,7 @@ export default async function handler(req, res) {
     const userKey = userRes?.success?.userKey;
     if (!userKey) {
       console.error('[auth/login] login-me failed:', userRes);
-      return res.status(401).json({ error: 'Failed to get user info', debug: userRes });
+      return res.status(401).json({ error: 'Failed to get user info' });
     }
 
     // 3. UPSERT user
@@ -49,7 +49,7 @@ export default async function handler(req, res) {
         toss_refresh_token = $2,
         last_login_at = NOW()
       RETURNING id, toss_user_id, nickname
-    `, [userKey, refreshToken]);
+    `, [String(userKey), refreshToken]);
     const user = rows[0];
 
     // 4. Sign JWT
