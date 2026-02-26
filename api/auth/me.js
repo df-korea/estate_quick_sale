@@ -17,7 +17,7 @@ export default async function handler(req, res) {
   try {
     const pool = getPool();
     const { rows } = await pool.query(
-      `SELECT id, toss_user_id, nickname, created_at, last_login_at FROM users WHERE id = $1`,
+      `SELECT id, toss_user_id, nickname, toss_name, toss_birthday, toss_gender, phone, profile_image_url, created_at, last_login_at FROM users WHERE id = $1`,
       [payload.userId]
     );
     if (rows.length === 0) {

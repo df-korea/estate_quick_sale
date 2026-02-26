@@ -343,8 +343,9 @@ async function handleArticlesSearch(req, res) {
   const { rows } = await pool.query(`
     SELECT a.id, a.article_no, a.deal_price, a.formatted_price,
       a.exclusive_space, a.trade_type, a.target_floor, a.total_floor,
-      a.bargain_score, a.bargain_keyword,
-      c.complex_name
+      a.bargain_score, a.bargain_keyword, a.space_name, a.direction,
+      a.description, a.dong_name, a.score_factors, a.first_seen_at,
+      c.complex_name, c.id AS complex_id
     FROM articles a
     JOIN complexes c ON a.complex_id = c.id
     WHERE a.article_status = 'active'
@@ -1264,7 +1265,7 @@ async function handleSigunguHeatmap(req, res) {
 
 async function handleSigunguComplexes(req, res) {
   const pool = getPool();
-  const { sggCd, division, city } = req.query;
+  const { sggCd, division, city, bargain_type } = req.query;
   const divisionFilter = division || sggCd;
   if (!divisionFilter) return res.status(400).json({ error: 'division or sggCd required' });
   const limit = Math.min(parseInt(req.query.limit) || 50, 200);
@@ -1272,6 +1273,11 @@ async function handleSigunguComplexes(req, res) {
   let params = [divisionFilter];
   let idx = 2;
   if (city) { where.push(`c.city = $${idx++}`); params.push(city); }
+  if (bargain_type === 'price') {
+    where.push(`EXISTS (SELECT 1 FROM articles a2 WHERE a2.complex_id = c.id AND a2.article_status = 'active' AND a2.bargain_type IN ('price','both'))`);
+  } else if (bargain_type === 'keyword') {
+    where.push(`EXISTS (SELECT 1 FROM articles a2 WHERE a2.complex_id = c.id AND a2.article_status = 'active' AND a2.bargain_type IN ('keyword','both'))`);
+  }
   params.push(limit);
 
   const { rows } = await pool.query(`
@@ -1360,7 +1366,9 @@ async function handleCommunityPosts(req, res) {
       CASE WHEN p.attached_article_id IS NOT NULL THEN (
         SELECT row_to_json(sub) FROM (
           SELECT a.id, a.deal_price, a.formatted_price, a.exclusive_space,
-            a.trade_type, c.complex_name
+            a.trade_type, a.space_name, a.direction, a.description, a.dong_name,
+            a.score_factors, a.first_seen_at, a.target_floor, a.total_floor,
+            a.bargain_score, a.bargain_keyword, c.complex_name, c.id AS complex_id
           FROM articles a JOIN complexes c ON a.complex_id = c.id
           WHERE a.id = p.attached_article_id
         ) sub
@@ -1417,7 +1425,8 @@ async function handleCommunityPostDetail(req, res) {
         SELECT row_to_json(sub) FROM (
           SELECT a.id, a.deal_price, a.formatted_price, a.exclusive_space,
             a.trade_type, a.target_floor, a.total_floor, a.bargain_score,
-            a.bargain_keyword, c.complex_name, c.id AS complex_id
+            a.bargain_keyword, a.space_name, a.direction, a.description, a.dong_name,
+            a.score_factors, a.first_seen_at, c.complex_name, c.id AS complex_id
           FROM articles a JOIN complexes c ON a.complex_id = c.id
           WHERE a.id = p.attached_article_id
         ) sub

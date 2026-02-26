@@ -36,7 +36,7 @@ export function useSigunguHeatmap(sidoName: string | null, bargainType?: Bargain
   return { data, loading };
 }
 
-export function useSigunguComplexes(division: string | null, city?: string | null) {
+export function useSigunguComplexes(division: string | null, city?: string | null, bargainType?: BargainMode) {
   const [data, setData] = useState<SigunguComplex[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -45,11 +45,12 @@ export function useSigunguComplexes(division: string | null, city?: string | nul
     setLoading(true);
     const qs = new URLSearchParams({ division });
     if (city) qs.set('city', city);
+    if (bargainType && bargainType !== 'all') qs.set('bargain_type', bargainType);
     apiFetch<SigunguComplex[]>(`/map/sigungu-complexes?${qs}`)
       .then(setData)
       .catch(() => setData([]))
       .finally(() => setLoading(false));
-  }, [division, city]);
+  }, [division, city, bargainType]);
 
   return { data, loading };
 }

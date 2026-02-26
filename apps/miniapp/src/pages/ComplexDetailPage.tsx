@@ -8,7 +8,7 @@ import { extent, linearScale } from '../utils/chart';
 import LoadingSpinner from '../components/LoadingSpinner';
 import EmptyState from '../components/EmptyState';
 import BargainBadge from '../components/BargainBadge';
-import type { MarketTrendItem, MarketFloorAnalysis } from '../types';
+import type { MarketTrendItem, MarketTransaction, MarketFloorAnalysis } from '../types';
 
 type Tab = 'articles' | 'market';
 
@@ -278,12 +278,13 @@ function MarketTab({ complexId }: { complexId: string }) {
             <EmptyState message="차트 데이터 부족" />
           ) : (
             <div style={{ overflow: 'auto' }}>
-              <PriceTrendChart data={trend} width={Math.max(320, trend.length * 28)} height={220} />
+              <PriceTrendChart data={trend} transactions={transactions} width={Math.max(320, trend.length * 28)} height={220} />
             </div>
           )}
-          <div className="flex gap-12 text-xs text-gray" style={{ marginTop: 6, justifyContent: 'center' }}>
+          <div className="flex gap-12 text-xs text-gray" style={{ marginTop: 6, justifyContent: 'center', flexWrap: 'wrap' }}>
             <span><span style={{ display: 'inline-block', width: 16, height: 2, background: 'var(--blue-500)', verticalAlign: 'middle', marginRight: 4 }} />평균</span>
             <span><span style={{ display: 'inline-block', width: 16, height: 2, background: 'var(--gray-300)', verticalAlign: 'middle', marginRight: 4, borderTop: '1px dashed var(--gray-400)' }} />최고/최저</span>
+            <span><span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: 'var(--blue-500)', opacity: 0.45, verticalAlign: 'middle', marginRight: 4 }} />개별 거래</span>
             <span><span style={{ display: 'inline-block', width: 8, height: 8, background: 'rgba(59,130,246,0.2)', verticalAlign: 'middle', marginRight: 4 }} />거래량</span>
           </div>
         </div>
@@ -359,7 +360,7 @@ function MetricCard({ label, value, color }: { label: string; value: string; col
   );
 }
 
-function PriceTrendChart({ data, width, height }: { data: MarketTrendItem[]; width: number; height: number }) {
+function PriceTrendChart({ data, transactions, width, height }: { data: MarketTrendItem[]; transactions?: MarketTransaction[]; width: number; height: number }) {
   const pad = { top: 10, right: 10, bottom: 40, left: 55 };
   const cw = width - pad.left - pad.right;
   const ch = height - pad.top - pad.bottom;
@@ -415,6 +416,26 @@ function PriceTrendChart({ data, width, height }: { data: MarketTrendItem[]; wid
 
       {/* Average solid line */}
       <polyline points={toPoints(avgValues)} fill="none" stroke="var(--blue-500)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+
+      {/* Scatter dots for individual transactions */}
+      {transactions && transactions.length > 0 && (() => {
+        const monthIndex = new Map<string, number>();
+        data.forEach((d, i) => monthIndex.set(d.month, i));
+        return transactions
+          .filter(tx => !tx.is_cancel && tx.deal_amount > 0)
+          .map((tx, i) => {
+            const monthKey = `${tx.deal_year}-${String(tx.deal_month).padStart(2, '0')}`;
+            const idx = monthIndex.get(monthKey);
+            if (idx === undefined) return null;
+            const dayOffset = (tx.deal_day || 15) / 30;
+            const xPos = pad.left + scaleX(idx + dayOffset - 0.5);
+            const yPos = pad.top + scaleY(tx.deal_amount);
+            return (
+              <circle key={`dot-${i}`} cx={xPos} cy={yPos} r={3.5}
+                fill="var(--blue-500)" opacity={0.45} stroke="white" strokeWidth={0.5} />
+            );
+          });
+      })()}
 
       {/* X axis labels */}
       {data.map((d, i) => {

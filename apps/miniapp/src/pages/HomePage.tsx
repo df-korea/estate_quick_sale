@@ -57,7 +57,7 @@ export default function HomePage() {
     <div className="page">
       {/* Brand Header */}
       <div className="page-header glass">
-        <h1>급매 레이더</h1>
+        <h1>부동산 급매 레이더</h1>
         <div className="flex items-center gap-8">
           <button onClick={() => setShowAlgoModal(true)} className="press-effect" style={{
             width: 24, height: 24, borderRadius: '50%', background: 'var(--gray-100)',
@@ -74,10 +74,19 @@ export default function HomePage() {
       <div className="page-content">
         {/* Briefing Bar */}
         {summary && (
-          <div className="flex gap-8 scroll-x animate-fade-in" style={{ marginBottom: 16 }}>
-            <BriefingChip label="오늘 급매" value={summary.new_bargains_today.toLocaleString()} color="var(--red-500)" />
-            <BriefingChip label="오늘 신규" value={summary.new_today.toLocaleString()} color="var(--blue-500)" />
-            <BriefingChip label="오늘 인하" value={String(summary.price_changes_today)} color="var(--green-500)" />
+          <div className="flex gap-8 scroll-x animate-fade-in" style={{ marginBottom: 16, alignItems: 'center' }}>
+            <span style={{
+              padding: '4px 10px',
+              background: 'var(--gray-100)',
+              borderRadius: 'var(--radius-full)',
+              fontSize: 12,
+              fontWeight: 700,
+              color: 'var(--gray-600)',
+              flexShrink: 0,
+            }}>오늘</span>
+            <BriefingChip label="급매" value={summary.new_bargains_today.toLocaleString()} color="var(--red-500)" />
+            <BriefingChip label="신규" value={summary.new_today.toLocaleString()} color="var(--blue-500)" />
+            <BriefingChip label="인하" value={String(summary.price_changes_today)} color="var(--green-500)" />
           </div>
         )}
 

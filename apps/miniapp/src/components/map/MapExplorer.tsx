@@ -7,6 +7,7 @@ import KakaoComplexMap from './KakaoComplexMap';
 import ComplexList from './ComplexList';
 import MapLegend from './MapLegend';
 import Breadcrumb from '../Breadcrumb';
+import PinchZoomWrapper from './PinchZoomWrapper';
 import LoadingSpinner from '../LoadingSpinner';
 
 const BARGAIN_MODES: { value: BargainMode; label: string }[] = [
@@ -28,7 +29,7 @@ export default function MapExplorer({ onDrillChange, onBargainModeChange }: Prop
 
   const { data: sidoHeatmap, loading: sidoLoading } = useSidoHeatmap(bargainMode);
   const { data: sigunguHeatmap, loading: sigunguLoading } = useSigunguHeatmap(selectedSido, bargainMode);
-  const { data: complexes, loading: complexLoading } = useSigunguComplexes(selectedSigungu, selectedSido);
+  const { data: complexes, loading: complexLoading } = useSigunguComplexes(selectedSigungu, selectedSido, bargainMode);
 
   function navigateTo(level: DrillLevel, sido: string | null, sigungu: string | null) {
     setDrillLevel(level);
@@ -58,6 +59,33 @@ export default function MapExplorer({ onDrillChange, onBargainModeChange }: Prop
         </div>
       )}
 
+      {drillLevel !== 'sido' && (
+        <button
+          onClick={() => {
+            if (drillLevel === 'complex') navigateTo('sigungu', selectedSido, null);
+            else navigateTo('sido', null, null);
+          }}
+          className="press-effect"
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 4,
+            padding: '6px 14px',
+            background: 'var(--gray-100)',
+            borderRadius: 'var(--radius-full)',
+            fontSize: 13,
+            fontWeight: 600,
+            color: 'var(--gray-700)',
+            marginBottom: 4,
+          }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <path d="M15 19l-7-7 7-7" />
+          </svg>
+          뒤로
+        </button>
+      )}
+
       <Breadcrumb
         selectedSido={drillLevel !== 'sido' ? selectedSido : null}
         selectedSigungu={drillLevel === 'complex' ? selectedSigungu : null}
@@ -69,37 +97,57 @@ export default function MapExplorer({ onDrillChange, onBargainModeChange }: Prop
       {/* Sido → click goes directly to sigungu */}
       {drillLevel === 'sido' && (
         sidoLoading ? <LoadingSpinner /> : (
-          <SidoMap
-            heatmap={sidoHeatmap}
-            onSelect={(sidoName) => navigateTo('sigungu', sidoName, null)}
-          />
+          <PinchZoomWrapper>
+            <SidoMap
+              heatmap={sidoHeatmap}
+              onSelect={(sidoName) => navigateTo('sigungu', sidoName, null)}
+            />
+          </PinchZoomWrapper>
         )
       )}
 
       {/* Sigungu → click goes directly to complex */}
       {drillLevel === 'sigungu' && selectedSido && (
         sigunguLoading ? <LoadingSpinner /> : (
-          <SigunguMap
-            sidoName={selectedSido}
-            heatmap={sigunguHeatmap}
-            onSelect={(sggName) => navigateTo('complex', selectedSido, sggName)}
-          />
+          <PinchZoomWrapper>
+            <SigunguMap
+              sidoName={selectedSido}
+              heatmap={sigunguHeatmap}
+              onSelect={(sggName) => navigateTo('complex', selectedSido, sggName)}
+            />
+          </PinchZoomWrapper>
         )
       )}
 
       {/* Complex level: Kakao Map + List */}
       {drillLevel === 'complex' && (
-        complexLoading ? <LoadingSpinner /> : (
-          <>
-            <KakaoComplexMap complexes={complexes} sigunguName={selectedSigungu ?? ''} />
-            <div style={{ marginTop: 12 }}>
-              <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>
-                전체 단지 ({complexes.length}개)
+        <>
+          <div className="flex gap-6" style={{ padding: '8px 0', alignItems: 'center' }}>
+            {BARGAIN_MODES.map(m => (
+              <button
+                key={m.value}
+                className={`chip ${bargainMode === m.value ? 'chip--active' : ''}`}
+                onClick={() => {
+                  setBargainMode(m.value);
+                  onBargainModeChange?.(m.value);
+                }}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+          {complexLoading ? <LoadingSpinner /> : (
+            <>
+              <KakaoComplexMap complexes={complexes} sigunguName={selectedSigungu ?? ''} />
+              <div style={{ marginTop: 12 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>
+                  {bargainMode === 'keyword' ? '키워드 급매 단지' : bargainMode === 'price' ? '가격 급매 단지' : '전체 단지'} ({complexes.length}개)
+                </div>
+                <ComplexList complexes={complexes} />
               </div>
-              <ComplexList complexes={complexes} />
-            </div>
-          </>
-        )
+            </>
+          )}
+        </>
       )}
 
       {(drillLevel === 'sido' || drillLevel === 'sigungu') && <MapLegend />}
@@ -186,7 +234,19 @@ function HelpButton() {
               fontWeight: 700,
               marginRight: 6,
             }}>키워드</span>
-            매물 설명에 급매, 급처분, 마이너스피, 손절, 최저가 등 키워드 포함
+            매물 설명에 아래 키워드 포함
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
+              {['급매', '급처분', '급전', '급히', '마이너스피', '마피', '급급', '손절', '최저가', '급하게'].map(kw => (
+                <span key={kw} style={{
+                  padding: '2px 8px',
+                  background: 'var(--red-50, #fff1f2)',
+                  color: 'var(--red-500)',
+                  borderRadius: 12,
+                  fontSize: 11,
+                  fontWeight: 600,
+                }}>{kw}</span>
+              ))}
+            </div>
           </div>
           <div>
             <span style={{
@@ -199,7 +259,7 @@ function HelpButton() {
               fontWeight: 700,
               marginRight: 6,
             }}>가격</span>
-            알고리즘 분석 — 단지 내 동일평형 대비 할인율(40점), 실거래가 대비(35점), 호가 인하 이력(15점), 등록 기간(10점). 합산 50점 이상
+            알고리즘 분석 — 단지내 호가비교(40점), 실거래비교(35점), 인하횟수(20점), 누적인하율(5점). 합산 50점 이상
           </div>
         </div>
       )}

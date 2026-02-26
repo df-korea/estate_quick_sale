@@ -14,15 +14,66 @@ interface Props {
   sigunguName: string;
 }
 
+function loadKakaoMaps(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (window.kakao?.maps?.Map) { resolve(); return; }
+    if (window.kakao?.maps) {
+      window.kakao.maps.load(() => resolve());
+      return;
+    }
+    // Dynamic script fallback
+    const existing = document.querySelector('script[src*="dapi.kakao.com"]');
+    if (!existing) {
+      const script = document.createElement('script');
+      script.src = 'https://dapi.kakao.com/v2/maps/sdk.js?appkey=405aeb3782bea91f07f42d1bae32efd8&libraries=clusterer&autoload=false';
+      script.onload = () => {
+        if (window.kakao?.maps) window.kakao.maps.load(() => resolve());
+        else reject(new Error('Kakao SDK loaded but maps unavailable'));
+      };
+      script.onerror = () => reject(new Error('Failed to load Kakao Maps SDK'));
+      document.head.appendChild(script);
+    } else {
+      // Script exists but not loaded yet - wait
+      const timer = setInterval(() => {
+        if (window.kakao?.maps) {
+          clearInterval(timer);
+          if (window.kakao.maps.Map) resolve();
+          else window.kakao.maps.load(() => resolve());
+        }
+      }, 100);
+      setTimeout(() => { clearInterval(timer); reject(new Error('Kakao Maps load timeout')); }, 10000);
+    }
+  });
+}
+
 export default function KakaoComplexMap({ complexes, sigunguName }: Props) {
   const mapRef = useRef<HTMLDivElement>(null);
+  const mapInstanceRef = useRef<any>(null);
   const [selected, setSelected] = useState<SigunguComplex | null>(null);
+  const [mapStatus, setMapStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const nav = useNavigate();
 
   const withCoords = complexes.filter(c => c.lat && c.lon);
 
   useEffect(() => {
-    if (!mapRef.current || !window.kakao?.maps || withCoords.length === 0) return;
+    if (!mapRef.current || withCoords.length === 0) return;
+    let cancelled = false;
+
+    loadKakaoMaps()
+      .then(() => {
+        if (cancelled || !mapRef.current) return;
+        setMapStatus('ready');
+        initMap();
+      })
+      .catch(() => {
+        if (!cancelled) setMapStatus('error');
+      });
+
+    return () => { cancelled = true; };
+  }, [withCoords.length]);
+
+  function initMap() {
+    if (!mapRef.current || !window.kakao?.maps?.Map) return;
 
     const kakao = window.kakao;
 
@@ -34,6 +85,7 @@ export default function KakaoComplexMap({ complexes, sigunguName }: Props) {
       center: new kakao.maps.LatLng(avgLat, avgLon),
       level: 5,
     });
+    mapInstanceRef.current = map;
 
     // Fit bounds
     const bounds = new kakao.maps.LatLngBounds();
@@ -68,10 +120,7 @@ export default function KakaoComplexMap({ complexes, sigunguName }: Props) {
       });
     });
 
-    return () => {
-      // cleanup
-    };
-  }, [withCoords.length]);
+  }
 
   if (withCoords.length === 0) return null;
 
@@ -85,8 +134,47 @@ export default function KakaoComplexMap({ complexes, sigunguName }: Props) {
         <span>{withCoords.length}개 단지</span>
       </div>
 
-      <div style={{ borderRadius: 'var(--radius-md)', overflow: 'hidden', boxShadow: 'var(--shadow-card)' }}>
+      <div style={{ borderRadius: 'var(--radius-md)', overflow: 'hidden', boxShadow: 'var(--shadow-card)', position: 'relative' }}>
         <div ref={mapRef} style={{ width: '100%', height: 300 }} />
+
+        {/* Loading / Error overlay */}
+        {mapStatus === 'loading' && (
+          <div style={{
+            position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'var(--gray-50)', color: 'var(--gray-500)', fontSize: 13,
+          }}>지도 로딩 중...</div>
+        )}
+        {mapStatus === 'error' && (
+          <div style={{
+            position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+            background: 'var(--gray-50)', color: 'var(--gray-500)', fontSize: 13, gap: 8,
+          }}>
+            <span>지도를 불러올 수 없습니다</span>
+            <button onClick={() => window.location.reload()} className="press-effect" style={{
+              padding: '4px 12px', background: 'var(--blue-500)', color: 'white', borderRadius: 'var(--radius-sm)', fontSize: 12,
+            }}>새로고침</button>
+          </div>
+        )}
+
+        {/* Zoom buttons */}
+        {mapStatus === 'ready' && (
+          <div style={{
+            position: 'absolute', top: 10, right: 10, display: 'flex', flexDirection: 'column', gap: 2, zIndex: 5,
+          }}>
+            <button onClick={() => { const m = mapInstanceRef.current; if (m) m.setLevel(m.getLevel() - 1); }}
+              style={{
+                width: 32, height: 32, background: 'var(--white)', border: '1px solid var(--gray-300)',
+                borderRadius: '6px 6px 0 0', fontSize: 18, fontWeight: 700, color: 'var(--gray-700)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
+              }}>+</button>
+            <button onClick={() => { const m = mapInstanceRef.current; if (m) m.setLevel(m.getLevel() + 1); }}
+              style={{
+                width: 32, height: 32, background: 'var(--white)', border: '1px solid var(--gray-300)',
+                borderRadius: '0 0 6px 6px', fontSize: 18, fontWeight: 700, color: 'var(--gray-700)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
+              }}>-</button>
+          </div>
+        )}
       </div>
 
       {/* Selected popup */}

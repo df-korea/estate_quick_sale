@@ -41,9 +41,29 @@ export default function AlgorithmModal({ open, onClose }: Props) {
           </button>
         </div>
 
-        <Section title="배치 급매점수 (bargain_score, 0~100)">
-          <Item num="1" title="단지 내 비교 (최대 40점)" desc="동일 단지 동일평형 매물 평균가 대비 할인율" />
-          <Item num="2" title="실거래 비교 (최대 35점)" desc="최근 6개월 실거래가 평균 대비 할인율" />
+        <Section title="키워드 급매">
+          <p className="text-sm text-gray" style={{ lineHeight: 1.5, marginBottom: 8 }}>
+            매물 설명에 아래 키워드 포함 시 별도 표시
+          </p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+            {['급매', '급처분', '급전', '급히', '마이너스피', '마피', '급급', '손절', '최저가', '급하게'].map(kw => (
+              <span key={kw} style={{
+                padding: '2px 8px',
+                background: 'var(--red-50, #fff1f2)',
+                color: 'var(--red-500)',
+                borderRadius: 12,
+                fontSize: 11,
+                fontWeight: 600,
+              }}>{kw}</span>
+            ))}
+          </div>
+        </Section>
+
+        <div style={{ height: 1, background: 'var(--border)', margin: '16px 0' }} />
+
+        <Section title="가격 급매점수 (bargain_score, 0~100)">
+          <Item num="1" title="단지내 호가비교 (최대 40점)" desc="동일 단지 동일평형 매물 평균가 대비 할인율" />
+          <Item num="2" title="실거래비교 (최대 35점)" desc="최근 6개월 실거래가 평균 대비 할인율" />
           <Item num="3" title="인하 이력 (최대 20점)" desc="호가 인하 횟수 (1회=4점)" />
           <Item num="4" title="누적 인하율 (최대 5점)" desc="최초가 대비 현재가 하락 비율" />
           <div className="text-sm" style={{ marginTop: 8, padding: '8px 12px', background: 'var(--blue-50)', borderRadius: 8, color: 'var(--blue-600)' }}>
@@ -57,14 +77,6 @@ export default function AlgorithmModal({ open, onClose }: Props) {
           <Item num="1" title="단지 평균 대비 (최대 40점)" desc="동일평형 매물 평균가 비교" />
           <Item num="2" title="실거래 대비 (최대 40점)" desc="6개월 실거래 평균가 비교" />
           <Item num="3" title="호가 변동 (최대 20점)" desc="가격 인하 이력" />
-        </Section>
-
-        <div style={{ height: 1, background: 'var(--border)', margin: '16px 0' }} />
-
-        <Section title="키워드 급매">
-          <p className="text-sm text-gray" style={{ lineHeight: 1.5 }}>
-            매물 설명에 "급매", "저가" 등 키워드 포함 시 별도 표시
-          </p>
         </Section>
       </div>
     </div>

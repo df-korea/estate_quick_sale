@@ -48,7 +48,7 @@ export default async function handler(req, res) {
       ON CONFLICT (toss_user_id) DO UPDATE SET
         toss_refresh_token = $2,
         last_login_at = NOW()
-      RETURNING id, toss_user_id, nickname
+      RETURNING id, toss_user_id, nickname, toss_name, toss_birthday, toss_gender, phone, profile_image_url
     `, [String(userKey), refreshToken]);
     const user = rows[0];
 
