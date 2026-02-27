@@ -460,7 +460,7 @@ async function collectComplex(page, c, stats) {
 // Worker pattern (병렬 처리)
 // ══════════════════════════════════════════════════
 
-const CONCURRENCY = 5;
+const CONCURRENCY = 100;
 
 async function processWithWorkers(complexes, processFn, page, stats, label) {
   let nextIdx = 0;
@@ -512,7 +512,7 @@ async function runQuickScan(page, stats) {
 
   const changedComplexes = [];
   const staleComplexes = [];
-  const BATCH_SIZE = 30;
+  const BATCH_SIZE = 100;
   const complexMap = new Map(complexes.map(c => [c.hscp_no, c]));
 
   for (let i = 0; i < complexes.length; i += BATCH_SIZE) {

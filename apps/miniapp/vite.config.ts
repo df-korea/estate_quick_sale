@@ -5,7 +5,11 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      '/api': 'http://localhost:3001',
+      '/api': {
+        target: 'https://estate-quick-sale.vercel.app',
+        changeOrigin: true,
+        secure: true,
+      },
     },
   },
 })

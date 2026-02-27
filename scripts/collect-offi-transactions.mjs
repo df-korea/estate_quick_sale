@@ -27,7 +27,7 @@ const SERVICE_KEY = 'c0f54f9f3d2354efe7d3dbcf4571fc687dd8694479df431de883391688a
 const BASE_URL = 'https://apis.data.go.kr/1613000/RTMSDataSvcOffiTrade/getRTMSDataSvcOffiTrade';
 const DAILY_LIMIT = 10000;
 const ROWS_PER_PAGE = 1000;
-const DELAY_MS = 0;
+const DELAY_MS = 200;
 
 // ============================================
 // Args 파싱
@@ -84,9 +84,6 @@ let apiCallCount = 0;
 
 async function fetchPage(sggCode, dealYmd, pageNo = 1) {
   apiCallCount++;
-  if (apiCallCount > DAILY_LIMIT - 100) {
-    throw new Error(`일일 API 한도 근접 (${apiCallCount}/${DAILY_LIMIT}). 내일 --resume으로 이어하세요.`);
-  }
 
   const params = new URLSearchParams({
     serviceKey: SERVICE_KEY,

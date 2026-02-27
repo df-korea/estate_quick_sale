@@ -88,9 +88,6 @@ let apiCallCount = 0;
 
 async function fetchPage(sggCode, dealYmd, pageNo = 1) {
   apiCallCount++;
-  if (apiCallCount > DAILY_LIMIT - 100) {
-    throw new Error(`일일 API 한도 근접 (${apiCallCount}/${DAILY_LIMIT}). 내일 --resume으로 이어하세요.`);
-  }
 
   const params = new URLSearchParams({
     serviceKey: SERVICE_KEY,
