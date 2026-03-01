@@ -137,7 +137,7 @@ export async function route(req, res, path) {
 // ════════════════════════════════════════
 
 async function handleBriefing(_req, res) {
-  const data = await cached('briefing', 30_000, async () => {
+  const data = await cached('briefing', 300_000, async () => {
     const pool = getPool();
     const [overview, newBargains, topDrops, hotComplexes] = await Promise.all([
       pool.query(`
@@ -229,7 +229,7 @@ async function handleBargains(req, res) {
 }
 
 async function handleBargainsCount(_req, res) {
-  const data = await cached('bargains:count', 60_000, async () => {
+  const data = await cached('bargains:count', 300_000, async () => {
     const pool = getPool();
     const { rows } = await pool.query(`
       SELECT
@@ -290,7 +290,7 @@ async function handleBargainsFiltered(req, res) {
 
 async function handleBargainsByRegion(req, res) {
   const limit = Math.min(parseInt(req.query.limit) || 5, 20);
-  const data = await cached(`bargains:by-region:${limit}`, 60_000, async () => {
+  const data = await cached(`bargains:by-region:${limit}`, 300_000, async () => {
     const pool = getPool();
     const { rows } = await pool.query(`
       WITH ranked AS (
@@ -992,156 +992,170 @@ async function handleRealTxListingVsActual(req, res) {
 // ════════════════════════════════════════
 
 async function handleAnalysisOverview(_req, res) {
-  const pool = getPool();
-  const [bargains, articles, newToday, priceChanges] = await Promise.all([
-    pool.query(`SELECT count(*)::int AS count FROM articles WHERE is_bargain = true AND article_status = 'active'`),
-    pool.query(`SELECT count(*)::int AS count FROM articles WHERE article_status = 'active'`),
-    pool.query(`SELECT count(*)::int AS count FROM articles WHERE article_status = 'active' AND first_seen_at >= CURRENT_DATE`),
-    pool.query(`SELECT count(*)::int AS count FROM price_history WHERE recorded_at >= CURRENT_DATE`),
-  ]);
-  const totalBargains = bargains.rows[0].count;
-  const totalArticles = articles.rows[0].count;
-  res.json({
-    total_bargains: totalBargains,
-    total_articles: totalArticles,
-    bargain_ratio: totalArticles > 0 ? Math.round((totalBargains / totalArticles) * 1000) / 10 : 0,
-    new_today: newToday.rows[0].count,
-    price_changes_today: priceChanges.rows[0].count,
+  const data = await cached('analysis:overview', 300_000, async () => {
+    const pool = getPool();
+    const [bargains, articles, newToday, priceChanges] = await Promise.all([
+      pool.query(`SELECT count(*)::int AS count FROM articles WHERE is_bargain = true AND article_status = 'active'`),
+      pool.query(`SELECT count(*)::int AS count FROM articles WHERE article_status = 'active'`),
+      pool.query(`SELECT count(*)::int AS count FROM articles WHERE article_status = 'active' AND first_seen_at >= CURRENT_DATE`),
+      pool.query(`SELECT count(*)::int AS count FROM price_history WHERE recorded_at >= CURRENT_DATE`),
+    ]);
+    const totalBargains = bargains.rows[0].count;
+    const totalArticles = articles.rows[0].count;
+    return {
+      total_bargains: totalBargains,
+      total_articles: totalArticles,
+      bargain_ratio: totalArticles > 0 ? Math.round((totalBargains / totalArticles) * 1000) / 10 : 0,
+      new_today: newToday.rows[0].count,
+      price_changes_today: priceChanges.rows[0].count,
+    };
   });
+  res.json(data);
 }
 
 async function handleBargainLeaderboard(req, res) {
-  const pool = getPool();
   const limit = Math.min(parseInt(req.query.limit) || 20, 100);
-  const bt = req.query.bargain_type;
-  const bargainFilter = bargainTypeCondition(bt);
-  const { rows } = await pool.query(`
-    SELECT
-      c.id AS complex_id,
-      c.complex_name,
-      c.city, c.division, c.sector,
-      count(*) FILTER (WHERE ${bargainFilter})::int AS bargain_count,
-      count(*)::int AS total_count,
-      CASE WHEN count(*) > 0
-        THEN round(count(*) FILTER (WHERE ${bargainFilter})::numeric / count(*)::numeric * 100, 1)
-        ELSE 0
-      END AS bargain_ratio,
-      round(avg(a.deal_price) FILTER (WHERE a.deal_price > 0))::bigint AS avg_price,
-      round(avg(a.bargain_score) FILTER (WHERE ${bargainFilter}), 1) AS avg_bargain_score
-    FROM articles a
-    JOIN complexes c ON a.complex_id = c.id
-    WHERE a.article_status = 'active'
-    GROUP BY c.id, c.complex_name, c.city, c.division, c.sector
-    HAVING count(*) FILTER (WHERE ${bargainFilter}) > 0
-    ORDER BY count(*) FILTER (WHERE ${bargainFilter}) DESC, bargain_ratio DESC
-    LIMIT $1
-  `, [limit]);
-  res.json(rows);
+  const bt = req.query.bargain_type || 'all';
+  const data = await cached(`analysis:leaderboard:${bt}:${limit}`, 300_000, async () => {
+    const pool = getPool();
+    const bargainFilter = bargainTypeCondition(bt === 'all' ? undefined : bt);
+    const { rows } = await pool.query(`
+      SELECT
+        c.id AS complex_id,
+        c.complex_name,
+        c.city, c.division, c.sector,
+        count(*) FILTER (WHERE ${bargainFilter})::int AS bargain_count,
+        count(*)::int AS total_count,
+        CASE WHEN count(*) > 0
+          THEN round(count(*) FILTER (WHERE ${bargainFilter})::numeric / count(*)::numeric * 100, 1)
+          ELSE 0
+        END AS bargain_ratio,
+        round(avg(a.deal_price) FILTER (WHERE a.deal_price > 0))::bigint AS avg_price,
+        round(avg(a.bargain_score) FILTER (WHERE ${bargainFilter}), 1) AS avg_bargain_score
+      FROM articles a
+      JOIN complexes c ON a.complex_id = c.id
+      WHERE a.article_status = 'active'
+      GROUP BY c.id, c.complex_name, c.city, c.division, c.sector
+      HAVING count(*) FILTER (WHERE ${bargainFilter}) > 0
+      ORDER BY count(*) FILTER (WHERE ${bargainFilter}) DESC, bargain_ratio DESC
+      LIMIT $1
+    `, [limit]);
+    return rows;
+  });
+  res.json(data);
 }
 
 async function handleRecentPriceChanges(req, res) {
-  const pool = getPool();
   const limit = Math.min(parseInt(req.query.limit) || 20, 100);
-  const { rows } = await pool.query(`
-    SELECT
-      ph.article_id,
-      c.complex_name,
-      a.exclusive_space,
-      ph.deal_price AS new_price,
-      ph.formatted_price AS new_price_text,
-      lag(ph.deal_price) OVER (PARTITION BY ph.article_id ORDER BY ph.recorded_at) AS prev_price,
-      CASE
-        WHEN lag(ph.deal_price) OVER (PARTITION BY ph.article_id ORDER BY ph.recorded_at) > 0
-        THEN round(
-          (ph.deal_price - lag(ph.deal_price) OVER (PARTITION BY ph.article_id ORDER BY ph.recorded_at))::numeric
-          / lag(ph.deal_price) OVER (PARTITION BY ph.article_id ORDER BY ph.recorded_at)::numeric * 100, 1
-        )
-        ELSE NULL
-      END AS change_pct,
-      ph.recorded_at
-    FROM price_history ph
-    JOIN articles a ON ph.article_id = a.id
-    JOIN complexes c ON a.complex_id = c.id
-    WHERE a.article_status = 'active'
-    ORDER BY ph.recorded_at DESC
-    LIMIT $1 * 2
-  `, [limit]);
-  const filtered = rows.filter(r => r.prev_price != null).slice(0, limit);
-  res.json(filtered);
+  const data = await cached(`analysis:price-changes:${limit}`, 300_000, async () => {
+    const pool = getPool();
+    const { rows } = await pool.query(`
+      SELECT
+        ph.article_id,
+        c.complex_name,
+        a.exclusive_space,
+        ph.deal_price AS new_price,
+        ph.formatted_price AS new_price_text,
+        lag(ph.deal_price) OVER (PARTITION BY ph.article_id ORDER BY ph.recorded_at) AS prev_price,
+        CASE
+          WHEN lag(ph.deal_price) OVER (PARTITION BY ph.article_id ORDER BY ph.recorded_at) > 0
+          THEN round(
+            (ph.deal_price - lag(ph.deal_price) OVER (PARTITION BY ph.article_id ORDER BY ph.recorded_at))::numeric
+            / lag(ph.deal_price) OVER (PARTITION BY ph.article_id ORDER BY ph.recorded_at)::numeric * 100, 1
+          )
+          ELSE NULL
+        END AS change_pct,
+        ph.recorded_at
+      FROM price_history ph
+      JOIN articles a ON ph.article_id = a.id
+      JOIN complexes c ON a.complex_id = c.id
+      WHERE a.article_status = 'active'
+      ORDER BY ph.recorded_at DESC
+      LIMIT $1 * 2
+    `, [limit]);
+    return rows.filter(r => r.prev_price != null).slice(0, limit);
+  });
+  res.json(data);
 }
 
 async function handleTopPriceDrops(req, res) {
-  const pool = getPool();
   const limit = Math.min(parseInt(req.query.limit) || 10, 50);
-  const { rows } = await pool.query(`
-    WITH first_last AS (
-      SELECT DISTINCT ON (ph.article_id)
-        ph.article_id,
-        first_value(ph.deal_price) OVER w AS initial_price,
-        a.deal_price AS current_price,
-        a.exclusive_space,
-        a.formatted_price,
-        a.target_floor,
-        a.total_floor,
-        a.bargain_score,
-        a.bargain_keyword,
-        c.complex_name,
-        c.id AS complex_id,
-        c.hscp_no
-      FROM price_history ph
-      JOIN articles a ON a.id = ph.article_id
-      JOIN complexes c ON c.id = a.complex_id
-      WHERE a.article_status = 'active' AND a.trade_type = 'A1' AND a.deal_price > 0
-      WINDOW w AS (PARTITION BY ph.article_id ORDER BY ph.recorded_at ASC)
-    ),
-    drops AS (
-      SELECT fl.*,
-        (fl.initial_price - fl.current_price) AS drop_amount,
-        round((1 - fl.current_price::numeric / fl.initial_price) * 100, 1) AS drop_pct,
-        (SELECT count(*)::int FROM (
-          SELECT ph2.deal_price,
-            lag(ph2.deal_price) OVER (ORDER BY ph2.recorded_at) AS prev
-          FROM price_history ph2
-          WHERE ph2.article_id = fl.article_id
-        ) sub WHERE prev IS NOT NULL AND sub.deal_price < sub.prev) AS drop_count
-      FROM first_last fl
-      WHERE fl.initial_price > fl.current_price
-    )
-    SELECT article_id, complex_name, complex_id, hscp_no,
-      exclusive_space, formatted_price, target_floor, total_floor,
-      bargain_score, bargain_keyword,
-      initial_price, current_price, drop_amount, drop_pct, drop_count
-    FROM drops
-    ORDER BY drop_amount DESC
-    LIMIT $1
-  `, [limit]);
-  res.json(rows);
+  const data = await cached(`analysis:top-drops:${limit}`, 300_000, async () => {
+    const pool = getPool();
+    const { rows } = await pool.query(`
+      WITH first_last AS (
+        SELECT DISTINCT ON (ph.article_id)
+          ph.article_id,
+          first_value(ph.deal_price) OVER w AS initial_price,
+          a.deal_price AS current_price,
+          a.exclusive_space,
+          a.formatted_price,
+          a.target_floor,
+          a.total_floor,
+          a.bargain_score,
+          a.bargain_keyword,
+          c.complex_name,
+          c.id AS complex_id,
+          c.hscp_no
+        FROM price_history ph
+        JOIN articles a ON a.id = ph.article_id
+        JOIN complexes c ON c.id = a.complex_id
+        WHERE a.article_status = 'active' AND a.trade_type = 'A1' AND a.deal_price > 0
+        WINDOW w AS (PARTITION BY ph.article_id ORDER BY ph.recorded_at ASC)
+      ),
+      drops AS (
+        SELECT fl.*,
+          (fl.initial_price - fl.current_price) AS drop_amount,
+          round((1 - fl.current_price::numeric / fl.initial_price) * 100, 1) AS drop_pct,
+          (SELECT count(*)::int FROM (
+            SELECT ph2.deal_price,
+              lag(ph2.deal_price) OVER (ORDER BY ph2.recorded_at) AS prev
+            FROM price_history ph2
+            WHERE ph2.article_id = fl.article_id
+          ) sub WHERE prev IS NOT NULL AND sub.deal_price < sub.prev) AS drop_count
+        FROM first_last fl
+        WHERE fl.initial_price > fl.current_price
+      )
+      SELECT article_id, complex_name, complex_id, hscp_no,
+        exclusive_space, formatted_price, target_floor, total_floor,
+        bargain_score, bargain_keyword,
+        initial_price, current_price, drop_amount, drop_pct, drop_count
+      FROM drops
+      ORDER BY drop_amount DESC
+      LIMIT $1
+    `, [limit]);
+    return rows;
+  });
+  res.json(data);
 }
 
 async function handleDistrictHeatmap(_req, res) {
-  const pool = getPool();
-  const { rows } = await pool.query(`
-    SELECT
-      c.division AS district,
-      count(*) FILTER (WHERE a.article_status = 'active')::int AS total_articles,
-      count(*) FILTER (WHERE a.is_bargain = true AND a.article_status = 'active')::int AS bargain_count,
-      CASE WHEN count(*) FILTER (WHERE a.article_status = 'active') > 0
-        THEN round(
-          count(*) FILTER (WHERE a.is_bargain = true AND a.article_status = 'active')::numeric
-          / count(*) FILTER (WHERE a.article_status = 'active')::numeric * 100, 1
-        )
-        ELSE 0
-      END AS bargain_ratio,
-      round(avg(a.deal_price) FILTER (WHERE a.deal_price > 0 AND a.article_status = 'active'))::bigint AS avg_price,
-      count(DISTINCT c.id)::int AS complex_count
-    FROM complexes c
-    LEFT JOIN articles a ON a.complex_id = c.id AND a.trade_type = 'A1'
-    WHERE c.is_active = true AND c.division IS NOT NULL
-    GROUP BY c.division
-    HAVING count(*) FILTER (WHERE a.article_status = 'active') > 0
-    ORDER BY count(*) FILTER (WHERE a.is_bargain = true AND a.article_status = 'active') DESC
-  `);
-  res.json(rows);
+  const data = await cached('analysis:district-heatmap', 600_000, async () => {
+    const pool = getPool();
+    const { rows } = await pool.query(`
+      SELECT
+        c.division AS district,
+        count(*) FILTER (WHERE a.article_status = 'active')::int AS total_articles,
+        count(*) FILTER (WHERE a.is_bargain = true AND a.article_status = 'active')::int AS bargain_count,
+        CASE WHEN count(*) FILTER (WHERE a.article_status = 'active') > 0
+          THEN round(
+            count(*) FILTER (WHERE a.is_bargain = true AND a.article_status = 'active')::numeric
+            / count(*) FILTER (WHERE a.article_status = 'active')::numeric * 100, 1
+          )
+          ELSE 0
+        END AS bargain_ratio,
+        round(avg(a.deal_price) FILTER (WHERE a.deal_price > 0 AND a.article_status = 'active'))::bigint AS avg_price,
+        count(DISTINCT c.id)::int AS complex_count
+      FROM complexes c
+      LEFT JOIN articles a ON a.complex_id = c.id AND a.trade_type = 'A1'
+      WHERE c.is_active = true AND c.division IS NOT NULL
+      GROUP BY c.division
+      HAVING count(*) FILTER (WHERE a.article_status = 'active') > 0
+      ORDER BY count(*) FILTER (WHERE a.is_bargain = true AND a.article_status = 'active') DESC
+    `);
+    return rows;
+  });
+  res.json(data);
 }
 
 async function handleDistrictBargains(req, res) {
@@ -1164,30 +1178,33 @@ async function handleDistrictBargains(req, res) {
 }
 
 async function handleRegionalDongRankings(req, res) {
-  const pool = getPool();
   const limit = Math.min(parseInt(req.query.limit) || 10, 50);
   const bt = req.query.bargainType || 'all';
-  let bargainWhere;
-  if (bt === 'keyword') bargainWhere = `a.bargain_type IN ('keyword', 'both')`;
-  else if (bt === 'price') bargainWhere = `a.bargain_score >= 60 AND a.bargain_type IN ('price', 'both')`;
-  else bargainWhere = `a.is_bargain = true`;
+  const data = await cached(`analysis:dong-rankings:${bt}:${limit}`, 300_000, async () => {
+    const pool = getPool();
+    let bargainWhere;
+    if (bt === 'keyword') bargainWhere = `a.bargain_type IN ('keyword', 'both')`;
+    else if (bt === 'price') bargainWhere = `a.bargain_score >= 60 AND a.bargain_type IN ('price', 'both')`;
+    else bargainWhere = `a.is_bargain = true`;
 
-  const { rows } = await pool.query(`
-    SELECT c.city, c.division, c.sector,
-      c.division || ' ' || c.sector AS region_name,
-      count(*)::int AS bargain_count,
-      round(avg(a.bargain_score), 1) AS avg_bargain_score,
-      round(avg(a.deal_price) FILTER (WHERE a.deal_price > 0))::bigint AS avg_price
-    FROM articles a JOIN complexes c ON a.complex_id = c.id
-    WHERE ${bargainWhere}
-      AND a.article_status = 'active'
-      AND c.sector IS NOT NULL AND a.trade_type = 'A1'
-    GROUP BY c.city, c.division, c.sector
-    HAVING count(*) >= 2
-    ORDER BY count(*) DESC, c.division, c.sector
-    LIMIT $1
-  `, [limit]);
-  res.json(rows);
+    const { rows } = await pool.query(`
+      SELECT c.city, c.division, c.sector,
+        c.division || ' ' || c.sector AS region_name,
+        count(*)::int AS bargain_count,
+        round(avg(a.bargain_score), 1) AS avg_bargain_score,
+        round(avg(a.deal_price) FILTER (WHERE a.deal_price > 0))::bigint AS avg_price
+      FROM articles a JOIN complexes c ON a.complex_id = c.id
+      WHERE ${bargainWhere}
+        AND a.article_status = 'active'
+        AND c.sector IS NOT NULL AND a.trade_type = 'A1'
+      GROUP BY c.city, c.division, c.sector
+      HAVING count(*) >= 2
+      ORDER BY count(*) DESC, c.division, c.sector
+      LIMIT $1
+    `, [limit]);
+    return rows;
+  });
+  res.json(data);
 }
 
 async function handleRegionalDongArticles(req, res) {
@@ -1215,107 +1232,118 @@ async function handleRegionalDongArticles(req, res) {
 // ════════════════════════════════════════
 
 async function handleSidoHeatmap(req, res) {
-  const pool = getPool();
-  const bt = req.query.bargain_type;
-  const bargainFilter = bt === 'keyword'
-    ? `a.bargain_type IN ('keyword', 'both')`
-    : bt === 'price'
-    ? `a.bargain_type IN ('price', 'both')`
-    : `a.is_bargain = true`;
-  const { rows } = await pool.query(`
-    SELECT
-      c.city AS sido_name,
-      count(*) FILTER (WHERE a.article_status = 'active')::int AS total_articles,
-      count(*) FILTER (WHERE ${bargainFilter} AND a.article_status = 'active')::int AS bargain_count,
-      CASE WHEN count(*) FILTER (WHERE a.article_status = 'active') > 0
-        THEN round(
-          count(*) FILTER (WHERE ${bargainFilter} AND a.article_status = 'active')::numeric
-          / count(*) FILTER (WHERE a.article_status = 'active')::numeric * 100, 1
-        )
-        ELSE 0
-      END AS bargain_ratio,
-      count(DISTINCT c.id)::int AS complex_count
-    FROM complexes c
-    LEFT JOIN articles a ON a.complex_id = c.id AND a.trade_type = 'A1'
-    WHERE c.is_active = true AND c.city IS NOT NULL
-    GROUP BY c.city
-    ORDER BY count(*) FILTER (WHERE ${bargainFilter} AND a.article_status = 'active') DESC
-  `);
-  res.json(rows);
+  const bt = req.query.bargain_type || 'all';
+  const data = await cached(`map:sido:${bt}`, 600_000, async () => {
+    const pool = getPool();
+    const bargainFilter = bt === 'keyword'
+      ? `a.bargain_type IN ('keyword', 'both')`
+      : bt === 'price'
+      ? `a.bargain_type IN ('price', 'both')`
+      : `a.is_bargain = true`;
+    const { rows } = await pool.query(`
+      SELECT
+        c.city AS sido_name,
+        count(*) FILTER (WHERE a.article_status = 'active')::int AS total_articles,
+        count(*) FILTER (WHERE ${bargainFilter} AND a.article_status = 'active')::int AS bargain_count,
+        CASE WHEN count(*) FILTER (WHERE a.article_status = 'active') > 0
+          THEN round(
+            count(*) FILTER (WHERE ${bargainFilter} AND a.article_status = 'active')::numeric
+            / count(*) FILTER (WHERE a.article_status = 'active')::numeric * 100, 1
+          )
+          ELSE 0
+        END AS bargain_ratio,
+        count(DISTINCT c.id)::int AS complex_count
+      FROM complexes c
+      LEFT JOIN articles a ON a.complex_id = c.id AND a.trade_type = 'A1'
+      WHERE c.is_active = true AND c.city IS NOT NULL
+      GROUP BY c.city
+      ORDER BY count(*) FILTER (WHERE ${bargainFilter} AND a.article_status = 'active') DESC
+    `);
+    return rows;
+  });
+  res.json(data);
 }
 
 async function handleSigunguHeatmap(req, res) {
-  const pool = getPool();
   const { sido } = req.query;
   if (!sido) return res.status(400).json({ error: 'sido required' });
-  const bt = req.query.bargain_type;
-  const bargainFilter = bt === 'keyword'
-    ? `a.bargain_type IN ('keyword', 'both')`
-    : bt === 'price'
-    ? `a.bargain_type IN ('price', 'both')`
-    : `a.is_bargain = true`;
-  const { rows } = await pool.query(`
-    SELECT
-      c.division AS sgg_name,
-      count(*) FILTER (WHERE a.article_status = 'active')::int AS total_articles,
-      count(*) FILTER (WHERE ${bargainFilter} AND a.article_status = 'active')::int AS bargain_count,
-      CASE WHEN count(*) FILTER (WHERE a.article_status = 'active') > 0
-        THEN round(
-          count(*) FILTER (WHERE ${bargainFilter} AND a.article_status = 'active')::numeric
-          / count(*) FILTER (WHERE a.article_status = 'active')::numeric * 100, 1
-        )
-        ELSE 0
-      END AS bargain_ratio,
-      count(DISTINCT c.id)::int AS complex_count
-    FROM complexes c
-    LEFT JOIN articles a ON a.complex_id = c.id AND a.trade_type = 'A1'
-    WHERE c.is_active = true AND c.city = $1
-    GROUP BY c.division
-    ORDER BY count(*) FILTER (WHERE ${bargainFilter} AND a.article_status = 'active') DESC
-  `, [sido]);
-  res.json(rows);
+  const bt = req.query.bargain_type || 'all';
+  const data = await cached(`map:sigungu:${sido}:${bt}`, 300_000, async () => {
+    const pool = getPool();
+    const bargainFilter = bt === 'keyword'
+      ? `a.bargain_type IN ('keyword', 'both')`
+      : bt === 'price'
+      ? `a.bargain_type IN ('price', 'both')`
+      : `a.is_bargain = true`;
+    const { rows } = await pool.query(`
+      SELECT
+        c.division AS sgg_name,
+        count(*) FILTER (WHERE a.article_status = 'active')::int AS total_articles,
+        count(*) FILTER (WHERE ${bargainFilter} AND a.article_status = 'active')::int AS bargain_count,
+        CASE WHEN count(*) FILTER (WHERE a.article_status = 'active') > 0
+          THEN round(
+            count(*) FILTER (WHERE ${bargainFilter} AND a.article_status = 'active')::numeric
+            / count(*) FILTER (WHERE a.article_status = 'active')::numeric * 100, 1
+          )
+          ELSE 0
+        END AS bargain_ratio,
+        count(DISTINCT c.id)::int AS complex_count
+      FROM complexes c
+      LEFT JOIN articles a ON a.complex_id = c.id AND a.trade_type = 'A1'
+      WHERE c.is_active = true AND c.city = $1
+      GROUP BY c.division
+      ORDER BY count(*) FILTER (WHERE ${bargainFilter} AND a.article_status = 'active') DESC
+    `, [sido]);
+    return rows;
+  });
+  res.json(data);
 }
 
 async function handleSigunguComplexes(req, res) {
-  const pool = getPool();
   const { sggCd, division, city, bargain_type } = req.query;
   const divisionFilter = division || sggCd;
   if (!divisionFilter) return res.status(400).json({ error: 'division or sggCd required' });
-  const limit = Math.min(parseInt(req.query.limit) || 50, 200);
-  let where = ['c.division = $1', 'c.is_active = true'];
-  let params = [divisionFilter];
-  let idx = 2;
-  if (city) { where.push(`c.city = $${idx++}`); params.push(city); }
-  if (bargain_type === 'price') {
-    where.push(`EXISTS (SELECT 1 FROM articles a2 WHERE a2.complex_id = c.id AND a2.article_status = 'active' AND a2.bargain_type IN ('price','both'))`);
-  } else if (bargain_type === 'keyword') {
-    where.push(`EXISTS (SELECT 1 FROM articles a2 WHERE a2.complex_id = c.id AND a2.article_status = 'active' AND a2.bargain_type IN ('keyword','both'))`);
-  }
-  params.push(limit);
+  const bt = bargain_type || 'all';
+  const cacheKey = `map:complexes:${divisionFilter}:${city || ''}:${bt}`;
+  const data = await cached(cacheKey, 300_000, async () => {
+    const pool = getPool();
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    let where = ['c.division = $1', 'c.is_active = true'];
+    let params = [divisionFilter];
+    let idx = 2;
+    if (city) { where.push(`c.city = $${idx++}`); params.push(city); }
+    if (bt === 'price') {
+      where.push(`EXISTS (SELECT 1 FROM articles a2 WHERE a2.complex_id = c.id AND a2.article_status = 'active' AND a2.bargain_type IN ('price','both'))`);
+    } else if (bt === 'keyword') {
+      where.push(`EXISTS (SELECT 1 FROM articles a2 WHERE a2.complex_id = c.id AND a2.article_status = 'active' AND a2.bargain_type IN ('keyword','both'))`);
+    }
+    params.push(limit);
 
-  const { rows } = await pool.query(`
-    SELECT
-      c.id AS complex_id,
-      c.complex_name,
-      c.lat, c.lon,
-      count(*) FILTER (WHERE a.article_status = 'active')::int AS total_articles,
-      count(*) FILTER (WHERE a.is_bargain = true AND a.article_status = 'active')::int AS bargain_count,
-      CASE WHEN count(*) FILTER (WHERE a.article_status = 'active') > 0
-        THEN round(
-          count(*) FILTER (WHERE a.is_bargain = true AND a.article_status = 'active')::numeric
-          / count(*) FILTER (WHERE a.article_status = 'active')::numeric * 100, 1
-        )
-        ELSE 0
-      END AS bargain_ratio,
-      round(avg(a.deal_price) FILTER (WHERE a.deal_price > 0 AND a.article_status = 'active'))::bigint AS avg_price
-    FROM complexes c
-    LEFT JOIN articles a ON a.complex_id = c.id AND a.trade_type = 'A1'
-    WHERE ${where.join(' AND ')}
-    GROUP BY c.id, c.complex_name, c.lat, c.lon
-    ORDER BY count(*) FILTER (WHERE a.is_bargain = true AND a.article_status = 'active') DESC, total_articles DESC
-    LIMIT $${idx}
-  `, params);
-  res.json(rows);
+    const { rows } = await pool.query(`
+      SELECT
+        c.id AS complex_id,
+        c.complex_name,
+        c.lat, c.lon,
+        count(*) FILTER (WHERE a.article_status = 'active')::int AS total_articles,
+        count(*) FILTER (WHERE a.is_bargain = true AND a.article_status = 'active')::int AS bargain_count,
+        CASE WHEN count(*) FILTER (WHERE a.article_status = 'active') > 0
+          THEN round(
+            count(*) FILTER (WHERE a.is_bargain = true AND a.article_status = 'active')::numeric
+            / count(*) FILTER (WHERE a.article_status = 'active')::numeric * 100, 1
+          )
+          ELSE 0
+        END AS bargain_ratio,
+        round(avg(a.deal_price) FILTER (WHERE a.deal_price > 0 AND a.article_status = 'active'))::bigint AS avg_price
+      FROM complexes c
+      LEFT JOIN articles a ON a.complex_id = c.id AND a.trade_type = 'A1'
+      WHERE ${where.join(' AND ')}
+      GROUP BY c.id, c.complex_name, c.lat, c.lon
+      ORDER BY count(*) FILTER (WHERE a.is_bargain = true AND a.article_status = 'active') DESC, total_articles DESC
+      LIMIT $${idx}
+    `, params);
+    return rows;
+  });
+  res.json(data);
 }
 
 // ════════════════════════════════════════
@@ -1323,7 +1351,7 @@ async function handleSigunguComplexes(req, res) {
 // ════════════════════════════════════════
 
 async function handleStats(_req, res) {
-  const data = await cached('stats', 60_000, async () => {
+  const data = await cached('stats', 600_000, async () => {
     const pool = getPool();
     const [complexes, articles, bargains, removed, realTx, runs, lastCollection] = await Promise.all([
       pool.query(`SELECT count(*)::int as count FROM complexes`),

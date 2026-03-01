@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" width="600" height="600">
+  <defs>
+    <linearGradient id="bg8" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#F43F5E"/>
+      <stop offset="100%" stop-color="#E11D48"/>
+    </linearGradient>
+    <filter id="shadow8">
+      <feDropShadow dx="0" dy="5" stdDeviation="8" flood-color="#000" flood-opacity="0.25"/>
+    </filter>
+  </defs>
+  <rect width="600" height="600" fill="url(#bg8)"/>
+  <!-- Alert bell icon - LARGE -->
+  <g transform="translate(300, 210) scale(1.4)" filter="url(#shadow8)">
+    <!-- Bell body -->
+    <path d="M-70,30 C-70,-50 -50,-100 0,-110 C50,-100 70,-50 70,30 L-70,30 Z" fill="white" opacity="0.9"/>
+    <!-- Bell bottom -->
+    <rect x="-85" y="30" width="170" height="12" rx="6" fill="white" opacity="0.9"/>
+    <!-- Bell clapper -->
+    <circle cx="0" cy="52" r="14" fill="white" opacity="0.9"/>
+    <!-- Bell handle top -->
+    <path d="M-8,-110 C-8,-125 8,-125 8,-110" fill="none" stroke="white" stroke-width="5" stroke-linecap="round" opacity="0.9"/>
+    <!-- Exclamation on bell -->
+    <rect x="-4" y="-50" width="8" height="40" rx="4" fill="#E11D48"/>
+    <circle cx="0" cy="5" r="5" fill="#E11D48"/>
+  </g>
+  <!-- Notification waves - bigger -->
+  <g transform="translate(300, 175)" fill="none" stroke="white" stroke-linecap="round">
+    <path d="M110,-70 C135,-45 135,5 110,30" stroke-width="4" opacity="0.4"/>
+    <path d="M130,-95 C170,-60 170,15 130,50" stroke-width="3" opacity="0.25"/>
+    <path d="M-110,-70 C-135,-45 -135,5 -110,30" stroke-width="4" opacity="0.4"/>
+    <path d="M-130,-95 C-170,-60 -170,15 -130,50" stroke-width="3" opacity="0.25"/>
+  </g>
+  <!-- Text - LARGER -->
+  <text x="300" y="530" text-anchor="middle" fill="white" font-family="'Apple SD Gothic Neo', 'Pretendard', sans-serif" font-size="155" font-weight="900" letter-spacing="8">급매</text>
+</svg>

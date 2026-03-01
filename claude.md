@@ -1,108 +1,126 @@
-# 부동산 급매 알리미 - 개발 가이드
+# 부동산 급매 레이더 - 개발 가이드
 
-## 기술 스택
-- **프론트엔드**: React + TypeScript + Vite (토스 미니앱 WebView)
-- **UI**: 토스 디자인 토큰 기반 커스텀 CSS
-- **백엔드**: Express API 서버 + PostgreSQL
-- **DB**: Oracle Cloud VM PostgreSQL 17 (168.107.44.148:8081, user=estate_app, db=estate_quick_sale)
-- **배포**: Vercel
-- **데이터 수집**: 로컬 Node.js + Playwright (fin.land.naver.com API)
+## 아키텍처 (2채널: 토스 앱 + 웹)
 
-## 핵심 결정사항
-- **fin.land.naver.com API 전면 사용** (m.land 대체) — rate limit 없음, 풍부한 필드
-- Playwright headful 모드 필수 (fin.land는 브라우저 세션 필요)
-- 가격은 원(won) 단위로 저장 (fin.land API 원본 그대로)
-- 네이버가 클라우드 IP 차단 → 로컬 스크립트로 수집
-- 토스 앱인토스 앱 등록 완료 (appName: `estate-quick-sale`)
+```
+토스 앱 유저 → .ait (apps/miniapp/) → estate-rader.com/api → DB
+웹 브라우저  → Next.js (web/)       → estate-rader.com/api → DB
+                                          ↑ 같은 서버 (port 3001)
+```
 
-## DB 스키마 (v2 — fin.land 기반)
-- **complexes**: 단지 마스터 (city/division/sector 주소, 좌표, 준공일, prev_deal_count)
-- **articles**: 매물 (42개 컬럼, 가격 원단위, fin.land 전필드 + raw_data jsonb)
-- **price_history**: 호가 변동 (deal_price 원단위, source=api_history/scan_detected)
-- **bargain_detections**: 급매 감지 로그
-- **real_transactions**: 국토부 실거래 (2.3M rows, 별도 스키마)
-- **collection_runs, users, watchlist, alert_history**
+- **토스 미니앱**: `apps/miniapp/` — React + Vite + Granite, `.ait`로 빌드/배포 (변경 금지)
+- **웹 프론트**: `web/` — Next.js 16 App Router, SSR + 동적 OG 태그
+- **API 핸들러**: `api/` — 토스/웹 양쪽에서 공유 (JSON 스키마 변경 금지)
+- **서버**: Next.js가 port 3001에서 프론트 + API 모두 서빙 (PM2 `estate-web`)
+- **DB**: PostgreSQL 17 (localhost:8081, user=estate_app)
+- **도메인**: `estate-rader.com` via Cloudflare Tunnel → 127.0.0.1:3001
 
-## 데이터 수집 (3-mode)
+## 절대 규칙
 
-**매물 수집 (collect-finland.mjs):**
-- `node --env-file=.env scripts/collect-finland.mjs` — **full**: 전수 UPSERT (기본, ~31분)
-- `node --env-file=.env scripts/collect-finland.mjs --quick` — **quick**: count 비교→변화 단지만 deep scan (~20분)
-- `node --env-file=.env scripts/collect-finland.mjs --incremental` — **incremental**: 전수 diff scan + 삭제/가격변동 감지 (~35분)
-- `node --env-file=.env scripts/collect-finland.mjs --resume` — 이어서 수집 (full/incremental)
-- `node --env-file=.env scripts/collect-finland.mjs --hscp 22627` — 단일 단지 테스트
-
-**운영 스케줄:**
-- 03:00 `--incremental` (전수 스캔 + 삭제 감지)
-- 06:00~21:00 `--quick` (3시간 간격, 변화 단지만)
-
-**기타 수집:**
-- `node --env-file=.env scripts/enrich-complexes.mjs` — 단지 정보 보강 (좌표/주소/준공일)
-- `node --env-file=.env scripts/enrich-complexes.mjs --missing-only` — 미보강 단지만
-- `node --env-file=.env scripts/collect-real-transactions.mjs --incremental` — 실거래가
+- `apps/miniapp/` 코드 변경 금지 (토스 앱 전용, 별도 빌드 체계)
+- `api/` 응답 JSON 스키마 변경 금지 (토스 앱 호환 깨짐)
+- `scripts/` 디렉토리 변경 금지 (수집 스크립트)
+- DB 스키마 변경 금지
+- `.env` 환경변수 구조 유지
 
 ## 빌드 & 배포
 
-**Vercel 배포 (API + 프론트 정적파일):**
+### 웹 (Next.js)
 ```bash
-git push origin main  # Vercel 자동 배포 (main 브랜치)
+cd web && npm run build        # next build --webpack
+pm2 restart estate-web         # 또는 pm2 start ecosystem.config.cjs
 ```
 
-**AIT 빌드 (토스 미니앱 번들):**
-```bash
-cd apps/miniapp
-npx granite build     # .ait 파일 생성 (estate-quick-sale.ait)
-```
-- `granite.config.ts`에서 appName, brand, web 설정 관리
-- 빌드 결과물은 `dist/` → `.ait` 패키징
-- `web.commands.build`의 결과물 경로가 `outdir`(기본 dist)과 일치해야 함
-
-**AIT 배포 (앱인토스 콘솔 업로드):**
+### 토스 미니앱 (.ait)
 ```bash
 cd apps/miniapp
-npx ait deploy                    # API 키 등록된 경우
-npx ait deploy --api-key {키}     # API 키 직접 전달
+npx granite build
+npx ait deploy --api-key "$TOSS_AIT_API_KEY"
 ```
-- 배포 완료 시 테스트 스킴 출력: `intoss-private://estate-quick-sale?_deploymentId=...`
-- 토스앱에서 QR 코드 또는 스킴으로 테스트
+- 배포 후 `intoss-private://...` 스킴으로 토스앱에서 테스트
+- 토스 콘솔에서 "검토 요청" → 승인 후 "출시하기"
 
-**AIT API 키 관리:**
+### 동시 배포 시 순서
+1. `api/` 변경 → `cd web && npm run build && pm2 restart estate-web`
+2. 웹 확인 후 → `cd apps/miniapp && npx granite build && npx ait deploy --api-key "$TOSS_AIT_API_KEY"`
+3. API 변경이 없으면 각각 독립 배포 가능
+
+## 주요 파일
+
+| 용도 | 경로 |
+|------|------|
+| API 라우트 핸들러 (공유) | `api/_lib/routes.js` (~1600줄) |
+| DB 풀 | `api/_lib/db.js` |
+| 캐시 (인메모리 TTL) | `api/_lib/cache.js` |
+| CORS | `api/_lib/cors.js` |
+| Next.js 설정 | `web/next.config.ts` (webpack `@api` alias) |
+| API 어댑터 | `web/src/lib/handler-adapter.ts` |
+| SSR 쿼리 | `web/src/lib/queries.ts` |
+| 웹 인증 | `web/src/components/AuthProvider.tsx` (Context) |
+| PM2 설정 | `ecosystem.config.cjs` |
+| 환경변수 | `.env` (web/.env는 심볼릭 링크) |
+
+## API 라우트 구조 (web/)
+
+- `web/src/app/api/[...path]/route.ts` → `api/_lib/routes.js`의 `route()` 위임
+- `web/src/app/api/auth/{login,logout,me}/route.ts` → 개별 핸들러
+- `web/src/app/api/toss/disconnect/route.ts` → 개별 핸들러
+- webpack `@api` alias로 `../api/` 밖의 파일 import
+
+## 캐시 (api/_lib/cache.js)
+
+인메모리 `Map`, PM2 재시작 시 초기화. 토스/웹 동일 캐시 공유 (같은 프로세스).
+
+| 대상 | 캐시 키 | TTL |
+|------|---------|-----|
+| 브리핑 | `briefing` | 5분 |
+| 급매 건수 | `bargains:count` | 5분 |
+| 지역별 급매 | `bargains:by-region:{limit}` | 5분 |
+| 시도 히트맵 | `map:sido:{모드}` | 10분 |
+| 시군구 히트맵 | `map:sigungu:{시도}:{모드}` | 5분 |
+| 단지 목록 | `map:complexes:{시군구}:{시}:{모드}` | 5분 |
+| 수집 통계 | `stats` | 10분 |
+| 구별 히트맵 | `analysis:district-heatmap` | 10분 |
+| 급매 리더보드 | `analysis:leaderboard:{모드}:{limit}` | 5분 |
+| 누적 가격인하 TOP | `analysis:top-drops:{limit}` | 5분 |
+| 최근 가격변동 | `analysis:price-changes:{limit}` | 5분 |
+| 분석 개요 | `analysis:overview` | 5분 |
+| 지역별 급매 랭킹 | `analysis:dong-rankings:{모드}:{limit}` | 5분 |
+
+## 급매 점수 (bargain_score, 0~100)
+
+`scripts/detect-price-bargains.mjs`에서 산정, 50점 이상이면 급매.
+
+| 요소 | 최대 | 계산 |
+|------|------|------|
+| 단지 내 비교 | 40점 | 동일평형(±3㎡) 평균 호가 대비 할인율 × 200 |
+| 실거래가 비교 | 35점 | 6개월 실거래 평균 대비 할인율 / 0.15 × 35 |
+| 가격 인하 횟수 | 20점 | 인하 1회 = 4점 |
+| 누적 인하율 | 5점 | 초기가 대비 하락률, 5%당 1점 |
+
+급매 유형: `keyword`(설명에 급매 키워드), `price`(50점↑), `both`(둘 다)
+
+## 데이터 수집
+
 ```bash
-npx ait token add          # 워크스페이스 API 키 등록 (1회)
-npx ait token remove       # 등록된 토큰 삭제
+node --env-file=.env scripts/collect-finland.mjs --incremental  # 전수 스캔
+node --env-file=.env scripts/collect-finland.mjs --quick         # 변화 단지만
+node --env-file=.env scripts/detect-price-bargains.mjs           # 급매 점수 갱신
+node --env-file=.env scripts/collect-real-transactions.mjs --incremental  # 실거래가
 ```
 
-**AIT 출시 프로세스:**
-1. `npx granite build` → `.ait` 생성
-2. `npx ait deploy` → 콘솔 업로드 + 테스트 스킴 발급
-3. 토스앱에서 QR 테스트 (최소 1회 필수)
-4. 콘솔에서 "검토 요청" (영업일 최대 3일)
-5. 승인 후 "출시하기" → 전체 사용자 반영
+스케줄: 03:00 `--incremental`, 06:00~21:00 `--quick` (3시간 간격)
 
-**CORS 설정 (토스 미니앱 운영 시):**
-- 실서비스: `https://estate-quick-sale.apps.tossmini.com`
-- QR 테스트: `https://estate-quick-sale.private-apps.tossmini.com`
+## 환경변수 (.env)
+
+- `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD` — DB 접속
+- `KAKAO_JAVASCRIPT_KEY` — 카카오맵 SDK
+- `TOSS_AIT_API_KEY` — 토스 AIT 배포용
+- `TOSS_MTLS_PRIVATE_KEY`, `TOSS_MTLS_PUBLIC_CERT` — 토스 mTLS 인증
+- `TOSS_LOGIN_DECRYPT_KEY` — 토스 로그인 복호화
 
 ## 외부 서비스
-- **Vercel**: https://vercel.com/backs-projects-87a24f27/estate-quick-sale
-- **카카오 앱**: https://developers.kakao.com/console/app/1388597/config/platform-key
-- **앱인토스 콘솔**: https://developers-apps-in-toss.toss.im/ (워크스페이스 → estate-quick-sale)
 
-## 환경변수
-- `.env` 파일 참조 (git에 커밋하지 않음)
-- PGHOST=168.107.44.148, PGPORT=8081, PGUSER=estate_app (Oracle Cloud VM PostgreSQL)
-- 로컬 수집 스크립트 + Vercel API 모두 Oracle VM에 직접 연결
-- `scripts/db.mjs`와 `api/_lib/db.js` 모두 원격 시 SSL 자동 활성화
-
----
-
-## 참고 문서
-
-**토스 앱인토스:**
-- [기본 문서] https://developers-apps-in-toss.toss.im/llms.txt
-- [예제 문서] https://developers-apps-in-toss.toss.im/tutorials/examples.md
-- [TDS 스타일 가이드] https://tossmini-docs.toss.im/tds-mobile/llms-full.txt
-
-**공식 문서:**
-- [토스 앱인토스 개발자 문서](https://developers-apps-in-toss.toss.im/)
-- [카카오 개발자 문서](https://developers.kakao.com/docs)
+- 카카오 앱: https://developers.kakao.com/console/app/1388597
+- 앱인토스 콘솔: https://developers-apps-in-toss.toss.im/
+- Cloudflare Tunnel: `estate-rader` (ID: b865013e-7551-4a74-9a53-391297d1e4f2)
