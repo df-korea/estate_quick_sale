@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import type { SigunguComplex } from '@/types';
+import type { SigunguComplex, BargainMode } from '@/types';
 import { formatWon } from '@/utils/format';
+import { apiFetch } from '@/lib/api';
 
 declare global {
   interface Window {
@@ -14,6 +15,7 @@ declare global {
 interface Props {
   complexes: SigunguComplex[];
   sigunguName: string;
+  bargainMode?: BargainMode;
 }
 
 let _kakaoPromise: Promise<void> | null = null;
@@ -48,17 +50,22 @@ function loadKakaoMaps(): Promise<void> {
   return _kakaoPromise;
 }
 
-export default function KakaoComplexMap({ complexes, sigunguName }: Props) {
+export default function KakaoComplexMap({ complexes, sigunguName, bargainMode = 'all' }: Props) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<any>(null);
+  const overlaysRef = useRef<any[]>([]);
   const [selected, setSelected] = useState<SigunguComplex | null>(null);
   const [mapStatus, setMapStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [boundsResults, setBoundsResults] = useState<SigunguComplex[] | null>(null);
+  const [boundsSearching, setBoundsSearching] = useState(false);
+  const [showBoundsButton, setShowBoundsButton] = useState(false);
   const nav = useRouter();
 
-  const withCoords = complexes.filter(c => c.lat && c.lon);
+  const displayComplexes = boundsResults ?? complexes;
+  const withCoords = displayComplexes.filter(c => c.lat && c.lon);
 
   useEffect(() => {
-    if (!mapRef.current || withCoords.length === 0) return;
+    if (!mapRef.current || complexes.filter(c => c.lat && c.lon).length === 0) return;
     let cancelled = false;
 
     loadKakaoMaps()
@@ -72,33 +79,35 @@ export default function KakaoComplexMap({ complexes, sigunguName }: Props) {
       });
 
     return () => { cancelled = true; };
-  }, [withCoords.length]);
+  }, [complexes.length]);
 
-  function initMap() {
-    if (!mapRef.current || !window.kakao?.maps?.Map) return;
+  // Re-render overlays when bargainMode or boundsResults change
+  useEffect(() => {
+    if (mapStatus === 'ready' && mapInstanceRef.current) {
+      renderOverlays(displayComplexes.filter(c => c.lat && c.lon));
+    }
+  }, [bargainMode, boundsResults, mapStatus]);
+
+  function getDisplayCount(c: SigunguComplex): number {
+    if (bargainMode === 'keyword') return c.keyword_count ?? c.bargain_count;
+    if (bargainMode === 'price') return c.price_count ?? c.bargain_count;
+    return c.bargain_count;
+  }
+
+  function renderOverlays(items: SigunguComplex[]) {
+    // Clear existing overlays
+    overlaysRef.current.forEach(o => o.setMap(null));
+    overlaysRef.current = [];
 
     const kakao = window.kakao;
+    const map = mapInstanceRef.current;
+    if (!kakao?.maps || !map) return;
 
-    // Calculate center
-    const avgLat = withCoords.reduce((s, c) => s + c.lat!, 0) / withCoords.length;
-    const avgLon = withCoords.reduce((s, c) => s + c.lon!, 0) / withCoords.length;
-
-    const map = new kakao.maps.Map(mapRef.current, {
-      center: new kakao.maps.LatLng(avgLat, avgLon),
-      level: 5,
-    });
-    mapInstanceRef.current = map;
-
-    // Fit bounds
-    const bounds = new kakao.maps.LatLngBounds();
-    withCoords.forEach(c => bounds.extend(new kakao.maps.LatLng(c.lat!, c.lon!)));
-    map.setBounds(bounds, 40);
-
-    // Create custom overlays
-    withCoords.forEach(c => {
-      const size = c.bargain_count >= 10 ? 36 : c.bargain_count >= 5 ? 30 : c.bargain_count >= 1 ? 24 : 18;
-      const bg = c.bargain_count >= 10 ? '#e02020' : c.bargain_count >= 5 ? '#f04452' : c.bargain_count >= 1 ? '#ff6666' : '#b0b8c1';
-      const label = c.bargain_count > 0 ? c.bargain_count : '';
+    items.forEach(c => {
+      const count = getDisplayCount(c);
+      const size = count >= 10 ? 36 : count >= 5 ? 30 : count >= 1 ? 24 : 18;
+      const bg = count >= 10 ? '#e02020' : count >= 5 ? '#f04452' : count >= 1 ? '#ff6666' : '#b0b8c1';
+      const label = count > 0 ? count : '';
 
       const content = document.createElement('div');
       content.style.cssText = `
@@ -113,18 +122,76 @@ export default function KakaoComplexMap({ complexes, sigunguName }: Props) {
       content.addEventListener('mouseenter', () => { content.style.transform = 'scale(1.2)'; });
       content.addEventListener('mouseleave', () => { content.style.transform = 'scale(1)'; });
 
-      new kakao.maps.CustomOverlay({
+      const overlay = new kakao.maps.CustomOverlay({
         map,
         position: new kakao.maps.LatLng(c.lat!, c.lon!),
         content,
         yAnchor: 0.5,
         xAnchor: 0.5,
       });
+      overlaysRef.current.push(overlay);
     });
-
   }
 
-  if (withCoords.length === 0) return null;
+  function initMap() {
+    if (!mapRef.current || !window.kakao?.maps?.Map) return;
+
+    const kakao = window.kakao;
+    const initCoords = complexes.filter(c => c.lat && c.lon);
+
+    // Calculate center
+    const avgLat = initCoords.reduce((s, c) => s + c.lat!, 0) / initCoords.length;
+    const avgLon = initCoords.reduce((s, c) => s + c.lon!, 0) / initCoords.length;
+
+    const map = new kakao.maps.Map(mapRef.current, {
+      center: new kakao.maps.LatLng(avgLat, avgLon),
+      level: 5,
+    });
+    mapInstanceRef.current = map;
+
+    // Fit bounds
+    const bounds = new kakao.maps.LatLngBounds();
+    initCoords.forEach(c => bounds.extend(new kakao.maps.LatLng(c.lat!, c.lon!)));
+    map.setBounds(bounds, 40);
+
+    // Show "이 지역에서 급매찾기" after drag/zoom
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    const handleMapChange = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => setShowBoundsButton(true), 500);
+    };
+    kakao.maps.event.addListener(map, 'dragend', handleMapChange);
+    kakao.maps.event.addListener(map, 'zoom_changed', handleMapChange);
+
+    renderOverlays(initCoords);
+  }
+
+  const searchBounds = useCallback(async (type: BargainMode) => {
+    const map = mapInstanceRef.current;
+    if (!map) return;
+    setBoundsSearching(true);
+    setShowBoundsButton(false);
+    try {
+      const bounds = map.getBounds();
+      const sw = bounds.getSouthWest();
+      const ne = bounds.getNorthEast();
+      const qs = new URLSearchParams({
+        minLat: sw.getLat().toFixed(6),
+        maxLat: ne.getLat().toFixed(6),
+        minLon: sw.getLng().toFixed(6),
+        maxLon: ne.getLng().toFixed(6),
+        bargain_type: type,
+      });
+      const results = await apiFetch<SigunguComplex[]>(`/map/bargains-in-bounds?${qs}`);
+      setBoundsResults(results);
+    } catch {
+      // ignore
+    } finally {
+      setBoundsSearching(false);
+    }
+  }, []);
+
+  if (complexes.filter(c => c.lat && c.lon).length === 0) return null;
 
   return (
     <div style={{ position: 'relative' }}>
@@ -133,7 +200,7 @@ export default function KakaoComplexMap({ complexes, sigunguName }: Props) {
         marginBottom: 6, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
       }}>
         <span>{sigunguName} 단지 위치</span>
-        <span>{withCoords.length}개 단지</span>
+        <span>{withCoords.length}개 단지{boundsResults ? ' (검색결과)' : ''}</span>
       </div>
 
       <div style={{ borderRadius: 'var(--radius-md)', overflow: 'hidden', boxShadow: 'var(--shadow-card)', position: 'relative' }}>
@@ -177,6 +244,48 @@ export default function KakaoComplexMap({ complexes, sigunguName }: Props) {
               }}>-</button>
           </div>
         )}
+
+        {/* Bounds search buttons */}
+        {mapStatus === 'ready' && (
+          <div style={{
+            position: 'absolute', bottom: selected ? 140 : 10, left: '50%', transform: 'translateX(-50%)',
+            display: 'flex', gap: 6, zIndex: 6,
+          }}>
+            {showBoundsButton && (
+              <>
+                <button onClick={() => searchBounds('keyword')} disabled={boundsSearching}
+                  className="press-effect" style={{
+                    padding: '6px 12px', background: 'var(--white)', border: '1px solid var(--gray-300)',
+                    borderRadius: 'var(--radius-full)', fontSize: 12, fontWeight: 600, color: 'var(--purple-600, #7c3aed)',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.15)', whiteSpace: 'nowrap',
+                  }}>키워드 급매 찾기</button>
+                <button onClick={() => searchBounds('price')} disabled={boundsSearching}
+                  className="press-effect" style={{
+                    padding: '6px 12px', background: 'var(--white)', border: '1px solid var(--gray-300)',
+                    borderRadius: 'var(--radius-full)', fontSize: 12, fontWeight: 600, color: 'var(--red-500)',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.15)', whiteSpace: 'nowrap',
+                  }}>가격 급매 찾기</button>
+              </>
+            )}
+            {boundsResults && (
+              <button onClick={() => { setBoundsResults(null); setShowBoundsButton(false); }}
+                className="press-effect" style={{
+                  padding: '6px 12px', background: 'var(--gray-100)', border: '1px solid var(--gray-300)',
+                  borderRadius: 'var(--radius-full)', fontSize: 12, fontWeight: 600, color: 'var(--gray-600)',
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.15)', whiteSpace: 'nowrap',
+                }}>초기화</button>
+            )}
+          </div>
+        )}
+
+        {boundsSearching && (
+          <div style={{
+            position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'rgba(255,255,255,0.6)', zIndex: 7,
+          }}>
+            <span style={{ fontSize: 13, color: 'var(--gray-600)' }}>검색 중...</span>
+          </div>
+        )}
       </div>
 
       {/* Selected popup */}
@@ -198,9 +307,14 @@ export default function KakaoComplexMap({ complexes, sigunguName }: Props) {
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 6L6 18M6 6l12 12" /></svg>
             </button>
           </div>
-          <div className="flex items-center gap-8" style={{ fontSize: 13, color: 'var(--gray-600)', marginBottom: 8 }}>
+          <div className="flex items-center gap-8" style={{ fontSize: 13, color: 'var(--gray-600)', marginBottom: 8, flexWrap: 'wrap' }}>
             <span>매물 {selected.total_articles}건</span>
             {selected.bargain_count > 0 && <span style={{ color: 'var(--red-500)', fontWeight: 600 }}>급매 {selected.bargain_count}</span>}
+            {(selected.keyword_count > 0 || selected.price_count > 0) && (
+              <span style={{ fontSize: 11, color: 'var(--gray-500)' }}>
+                (키워드 {selected.keyword_count ?? 0} / 가격 {selected.price_count ?? 0})
+              </span>
+            )}
             {selected.avg_price && <span>평균 {formatWon(selected.avg_price)}</span>}
           </div>
           <button onClick={() => nav.push(`/complex/${selected.complex_id}`)} className="press-effect" style={{

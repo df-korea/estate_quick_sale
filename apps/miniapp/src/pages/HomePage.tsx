@@ -1,14 +1,13 @@
 import { useState, useCallback, lazy, Suspense } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { DrillLevel, BargainSort, BargainMode, DongRankingItem } from '../types';
+import type { DrillLevel, BargainMode, DongRankingItem, PropertyType } from '../types';
 import { useBriefing } from '../hooks/useBriefing';
-import { useFilteredBargains } from '../hooks/useBargains';
+import { useRegionalTopBargains, useRegionalTopDivisions } from '../hooks/useBargains';
 import { useLeaderboard, useTopPriceDrops } from '../hooks/useAnalysis';
 import { useDongRankings, useDongArticles } from '../hooks/useDongRankings';
+import { useSidoHeatmap } from '../hooks/useMapData';
 import { formatWon, formatArea, abbreviateCity } from '../utils/format';
 const MapExplorer = lazy(() => import('../components/map/MapExplorer'));
-import BargainCard from '../components/BargainCard';
-import FilterBar from '../components/FilterBar';
 import SectionHeader from '../components/SectionHeader';
 import LeaderboardRow from '../components/LeaderboardRow';
 import TopPriceDropRow from '../components/TopPriceDropRow';
@@ -17,33 +16,26 @@ import ScoreBreakdownPopover from '../components/ScoreBreakdownPopover';
 import InlineBannerAd from '../components/InlineBannerAd';
 
 export default function HomePage() {
-  const [district, setDistrict] = useState<string | undefined>(undefined);
-  const [city, setCity] = useState<string | undefined>(undefined);
-  const [sort, setSort] = useState<BargainSort>('score_desc');
   const [bargainMode, setBargainMode] = useState<BargainMode>('all');
   const [leaderboardMode, setLeaderboardMode] = useState<string>('all');
 
   const { data: briefing } = useBriefing();
-  const { data: bargains, loading: bargainsLoading } = useFilteredBargains({
-    sort,
-    district,
-    city,
-    bargainType: bargainMode,
-    limit: 10,
-  });
   const { data: leaderboard } = useLeaderboard(10, leaderboardMode);
   const { data: topPriceDrops } = useTopPriceDrops(10);
   const [dongRankingMode, setDongRankingMode] = useState<BargainMode>('keyword');
   const { data: dongRankings, loading: dongLoading } = useDongRankings(10, dongRankingMode);
 
-  const handleDrillChange = useCallback((level: DrillLevel, sido: string | null, sigungu: string | null) => {
-    if (level === 'complex' && sigungu) {
-      setDistrict(sigungu);
-      setCity(sido ?? undefined);
-    } else {
-      setDistrict(undefined);
-      setCity(undefined);
-    }
+  // Regional TOP 10
+  const { data: sidoHeatmap } = useSidoHeatmap();
+  const sidoList = sidoHeatmap.map(s => s.sido_name).filter(Boolean);
+  const [selectedSido, setSelectedSido] = useState<string | null>(null);
+  const [selectedSigungu, setSelectedSigungu] = useState<string | null>(null);
+  const [regionalPropertyType, setRegionalPropertyType] = useState<PropertyType>('all');
+  const activeSido = selectedSido || sidoList[0] || null;
+  const { data: divisions } = useRegionalTopDivisions(activeSido, regionalPropertyType);
+  const { data: regionalBargains, loading: regionalLoading } = useRegionalTopBargains(activeSido, selectedSigungu, 10, regionalPropertyType);
+
+  const handleDrillChange = useCallback((_level: DrillLevel, _sido: string | null, _sigungu: string | null) => {
   }, []);
 
   const handleBargainModeChange = useCallback((mode: BargainMode) => {
@@ -78,6 +70,86 @@ export default function HomePage() {
           <Suspense fallback={<div style={{ height: 320, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>지도 로딩중...</div>}>
             <MapExplorer onDrillChange={handleDrillChange} onBargainModeChange={handleBargainModeChange} />
           </Suspense>
+        </section>
+
+        {/* Regional TOP 10 */}
+        <section className="section animate-fade-in-up stagger-2">
+          <SectionHeader title="최근 7일 가격 급매 TOP 10" right={
+            <select
+              value={regionalPropertyType}
+              onChange={e => setRegionalPropertyType(e.target.value as PropertyType)}
+              style={{
+                background: 'var(--gray-100)',
+                border: 'none',
+                borderRadius: 'var(--radius-full)',
+                padding: '6px 12px',
+                fontSize: 'var(--text-sm)',
+                color: 'var(--gray-700)',
+                cursor: 'pointer',
+              }}
+            >
+              <option value="all">전체</option>
+              <option value="APT">아파트</option>
+              <option value="OPST">오피스텔</option>
+            </select>
+          } />
+
+          {/* Sido + Sigungu selects */}
+          <div className="flex gap-6" style={{ marginBottom: 12 }}>
+            {sidoList.length > 0 && (
+              <select
+                value={activeSido || ''}
+                onChange={e => { setSelectedSido(e.target.value); setSelectedSigungu(null); }}
+                style={{
+                  background: 'var(--gray-100)',
+                  border: 'none',
+                  borderRadius: 'var(--radius-full)',
+                  padding: '6px 12px',
+                  fontSize: 'var(--text-sm)',
+                  color: 'var(--gray-700)',
+                  cursor: 'pointer',
+                }}
+              >
+                {sidoList.map(sido => (
+                  <option key={sido} value={sido}>{abbreviateCity(sido)}</option>
+                ))}
+              </select>
+            )}
+            {divisions.length > 0 && (
+              <select
+                value={selectedSigungu || ''}
+                onChange={e => setSelectedSigungu(e.target.value || null)}
+                style={{
+                  background: 'var(--gray-100)',
+                  border: 'none',
+                  borderRadius: 'var(--radius-full)',
+                  padding: '6px 12px',
+                  fontSize: 'var(--text-sm)',
+                  color: 'var(--gray-700)',
+                  cursor: 'pointer',
+                }}
+              >
+                <option value="">전체</option>
+                {divisions.map(d => (
+                  <option key={d.division} value={d.division}>{d.division} ({d.bargain_count})</option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          {regionalLoading ? <LoadingSpinner /> : regionalBargains.length > 0 ? (
+            <div className="card">
+              <div className="card-body" style={{ padding: 0 }}>
+                {regionalBargains.map((a, i) => (
+                  <RegionalBargainRow key={a.id} item={a} rank={i + 1} />
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="text-sm text-gray" style={{ padding: 'var(--space-16)', textAlign: 'center' }}>
+              해당 지역에 최근 7일 가격 급매가 없습니다
+            </div>
+          )}
         </section>
 
         {/* Dong Rankings */}
@@ -146,29 +218,8 @@ export default function HomePage() {
           </section>
         )}
 
-        {/* Ad: between price drops and bargain top 10 */}
+        {/* Ad: after price drops */}
         <InlineBannerAd />
-
-        {/* Bargain TOP 10 */}
-        <section className="section animate-fade-in-up stagger-5">
-          <SectionHeader
-            title={district
-              ? `${district} ${bargainMode === 'keyword' ? '키워드 급매' : bargainMode === 'price' ? '가격 급매' : '급매'} TOP 10`
-              : bargainMode === 'keyword' ? '키워드 급매 TOP 10' : bargainMode === 'price' ? '가격 급매 TOP 10' : '급매 TOP 10'}
-            right={<span className="text-sm text-gray">{bargains.length}건</span>}
-          />
-
-          <FilterBar
-            tradeFilter="all"
-            onTradeFilterChange={() => {}}
-            sort={sort}
-            onSortChange={setSort}
-          />
-
-          {bargainsLoading ? <LoadingSpinner /> : (
-            bargains.map(b => <BargainCard key={b.id} item={b} />)
-          )}
-        </section>
       </div>
     </div>
   );
@@ -264,6 +315,53 @@ function DongRankingArticles({ division, sector }: { division: string; sector: s
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function RegionalBargainRow({ item, rank }: { item: { id: number; deal_price: number; formatted_price?: string; exclusive_space: number; target_floor?: string; total_floor?: string; bargain_score: number; bargain_keyword?: string; bargain_type?: string; complex_name: string; complex_id: number; division?: string }; rank: number }) {
+  const nav = useNavigate();
+  return (
+    <div
+      onClick={() => nav(`/article/${item.id}`)}
+      style={{
+        padding: 'var(--space-12) var(--space-16)',
+        borderBottom: '1px solid var(--border)',
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+      }}
+    >
+      <span style={{
+        width: 22, height: 22, borderRadius: '50%',
+        background: rank <= 3 ? 'var(--red-500)' : 'var(--gray-300)',
+        color: 'white', fontSize: 11, fontWeight: 700,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+      }}>{rank}</span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="flex items-center justify-between">
+          <div className="truncate" style={{ fontWeight: 600, fontSize: 14 }}>
+            {item.complex_name} <span className="text-xs text-gray">{formatArea(item.exclusive_space)}</span>
+          </div>
+          <span style={{ fontWeight: 700, fontSize: 14, color: 'var(--blue-600)', flexShrink: 0, marginLeft: 8 }}>
+            {item.formatted_price || formatWon(item.deal_price)}
+          </span>
+        </div>
+        <div className="flex items-center gap-6 text-xs text-gray" style={{ marginTop: 2 }}>
+          <span style={{
+            background: 'var(--orange-50)',
+            color: 'var(--orange-500)',
+            padding: '1px 6px',
+            borderRadius: 4,
+            fontWeight: 600,
+            fontSize: 10,
+          }}>점수 {item.bargain_score}</span>
+          {item.target_floor && <span>{item.target_floor}/{item.total_floor}층</span>}
+          {item.bargain_keyword && <span style={{ color: 'var(--red-500)' }}>{item.bargain_keyword}</span>}
+          {item.division && <span>{item.division}</span>}
+        </div>
+      </div>
     </div>
   );
 }

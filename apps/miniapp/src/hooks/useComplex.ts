@@ -1,6 +1,35 @@
 import { useCallback, useEffect, useState } from 'react';
-import { apiFetch } from '../lib/api';
+import { apiFetch, apiPost } from '../lib/api';
 import type { Complex, ComplexSearchResult, ComplexArticle, ComplexPyeongType, ComplexDong } from '../types';
+
+export interface PopularComplex {
+  id: number;
+  complex_name: string;
+  property_type: string | null;
+  total_households: number | null;
+  deal_count: number;
+  lease_count: number;
+  rent_count: number;
+  view_count: number;
+}
+
+export function usePopularComplexes() {
+  const [data, setData] = useState<PopularComplex[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    apiFetch<PopularComplex[]>('/complexes/popular')
+      .then(setData)
+      .catch(() => setData([]))
+      .finally(() => setLoading(false));
+  }, []);
+
+  return { data, loading };
+}
+
+export function trackComplexView(complexId: string | number) {
+  apiPost(`/complexes/${complexId}/view`, {}).catch(() => {});
+}
 
 export function useComplexSearch(query: string) {
   const [results, setResults] = useState<ComplexSearchResult[]>([]);
@@ -47,6 +76,7 @@ export function useComplexArticles(
   bargainOnly = false,
   spaceName?: string,
   dongName?: string,
+  bargainType?: string,
 ) {
   const [data, setData] = useState<ComplexArticle[]>([]);
   const [loading, setLoading] = useState(true);
@@ -56,13 +86,14 @@ export function useComplexArticles(
     setLoading(true);
     const qs = new URLSearchParams({ tradeType, sort });
     if (bargainOnly) qs.set('bargainOnly', 'true');
+    if (bargainType) qs.set('bargainType', bargainType);
     if (spaceName) qs.set('spaceName', spaceName);
     if (dongName) qs.set('dongName', dongName);
     try {
       setData(await apiFetch<ComplexArticle[]>(`/complexes/${complexId}/articles?${qs}`));
     } catch { /* ignore */ }
     setLoading(false);
-  }, [complexId, tradeType, sort, bargainOnly, spaceName, dongName]);
+  }, [complexId, tradeType, sort, bargainOnly, bargainType, spaceName, dongName]);
 
   useEffect(() => { fetch(); }, [fetch]);
 

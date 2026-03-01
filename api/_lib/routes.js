@@ -51,6 +51,8 @@ const routes = [
   { m: 'GET', p: '/bargains/filtered', h: handleBargainsFiltered },
   { m: 'GET', p: '/bargains/by-region', h: handleBargainsByRegion },
   { m: 'GET', p: '/bargains/by-complexes', h: handleBargainsByComplexes },
+  { m: 'GET', p: '/bargains/regional-top', h: handleRegionalTopBargains },
+  { m: 'GET', p: '/bargains/regional-top-divisions', h: handleRegionalTopDivisions },
   { m: 'GET', p: '/bargains', h: handleBargains },
 
   // Articles
@@ -60,6 +62,7 @@ const routes = [
   { m: 'GET', p: '/articles/:id', h: handleArticleDetail },
 
   // Complexes
+  { m: 'GET', p: '/complexes/popular', h: handleComplexesPopular },
   { m: 'GET', p: '/complexes/search', h: handleComplexesSearch },
   { m: 'GET', p: '/complexes/:id/pyeong-types', h: handleComplexPyeongTypes },
   { m: 'GET', p: '/complexes/:id/dongs', h: handleComplexDongs },
@@ -69,9 +72,11 @@ const routes = [
   { m: 'GET', p: '/complexes/:id/market/trend', h: handleMarketTrend },
   { m: 'GET', p: '/complexes/:id/market/transactions', h: handleMarketTransactions },
   { m: 'GET', p: '/complexes/:id/market/floor-analysis', h: handleMarketFloorAnalysis },
+  { m: 'POST', p: '/complexes/:id/view', h: handleComplexView },
   { m: 'GET', p: '/complexes/:id', h: handleComplexDetail },
 
   // Real transactions
+  { m: 'GET', p: '/real-transactions/individual', h: handleRealTxIndividual },
   { m: 'GET', p: '/real-transactions/summary', h: handleRealTxSummary },
   { m: 'GET', p: '/real-transactions/count', h: handleRealTxCount },
   { m: 'GET', p: '/real-transactions/price-trend', h: handleRealTxPriceTrend },
@@ -96,6 +101,7 @@ const routes = [
   { m: 'GET', p: '/map/sido-heatmap', h: handleSidoHeatmap },
   { m: 'GET', p: '/map/sigungu-heatmap', h: handleSigunguHeatmap },
   { m: 'GET', p: '/map/sigungu-complexes', h: handleSigunguComplexes },
+  { m: 'GET', p: '/map/bargains-in-bounds', h: handleMapBargainsInBounds },
 
   // Stats
   { m: 'GET', p: '/stats', h: handleStats },
@@ -425,19 +431,19 @@ async function handleArticleAssessment(req, res) {
       AND exclusive_space BETWEEN $2::numeric - 3 AND $2::numeric + 3
   `, [article.complex_id, parseFloat(article.exclusive_space) || 0]);
 
-  const now = new Date();
-  const from6m = new Date(now.getFullYear(), now.getMonth() - 6, 1);
-  const fromYm = from6m.getFullYear() * 100 + (from6m.getMonth() + 1);
   const area = parseFloat(article.exclusive_space) || 0;
   const { rows: [txStats] } = await pool.query(`
     SELECT count(*)::int AS tx_count,
       round(avg(deal_amount))::bigint AS avg_tx_price
-    FROM real_transactions
-    WHERE complex_id = $1
-      AND exclu_use_ar BETWEEN $2::numeric - 3 AND $2::numeric + 3
-      AND (deal_year * 100 + deal_month) >= $3
-      AND ${CANCEL_FILTER}
-  `, [article.complex_id, area, fromYm]);
+    FROM (
+      SELECT deal_amount,
+        ROW_NUMBER() OVER (ORDER BY deal_year DESC, deal_month DESC, deal_day DESC NULLS LAST) AS rn
+      FROM real_transactions
+      WHERE complex_id = $1
+        AND exclu_use_ar BETWEEN $2::numeric - 3 AND $2::numeric + 3
+        AND ${CANCEL_FILTER}
+    ) sub WHERE rn <= 5
+  `, [article.complex_id, area]);
 
   const { rows: [phCount] } = await pool.query(
     `SELECT count(*)::int AS cnt FROM price_history WHERE article_id = $1`,
@@ -492,6 +498,28 @@ async function handleArticleAssessment(req, res) {
 // Complexes
 // ════════════════════════════════════════
 
+async function handleComplexesPopular(_req, res) {
+  const pool = getPool();
+  const { rows } = await pool.query(`
+    SELECT c.id, c.complex_name, c.property_type, c.total_households,
+      c.deal_count, c.lease_count, c.rent_count,
+      count(*)::int AS view_count
+    FROM complex_views cv
+    JOIN complexes c ON c.id = cv.complex_id
+    WHERE cv.viewed_at >= NOW() - INTERVAL '7 days'
+    GROUP BY c.id
+    ORDER BY count(*) DESC
+    LIMIT 10
+  `);
+  res.json(rows);
+}
+
+async function handleComplexView(req, res) {
+  const pool = getPool();
+  await pool.query('INSERT INTO complex_views (complex_id) VALUES ($1)', [req.params.id]);
+  res.json({ ok: true });
+}
+
 async function handleComplexesSearch(req, res) {
   const pool = getPool();
   const q = req.query.q || '';
@@ -516,11 +544,12 @@ async function handleComplexDetail(req, res) {
 async function handleComplexPyeongTypes(req, res) {
   const pool = getPool();
   const { rows } = await pool.query(`
-    SELECT space_name, exclusive_space,
+    SELECT COALESCE(NULLIF(space_name,''), ROUND(exclusive_space)::text || '㎡') AS space_name,
+      exclusive_space,
       round(exclusive_space / 3.3058)::int AS pyeong,
       count(*)::int AS article_count
     FROM articles
-    WHERE complex_id = $1 AND article_status = 'active' AND space_name IS NOT NULL
+    WHERE complex_id = $1 AND article_status = 'active'
     GROUP BY space_name, exclusive_space
     ORDER BY exclusive_space ASC
   `, [req.params.id]);
@@ -543,6 +572,7 @@ async function handleComplexArticles(req, res) {
   const tradeType = req.query.tradeType || 'A1';
   const sort = req.query.sort || 'price_asc';
   const bargainOnly = req.query.bargainOnly === 'true';
+  const bargainType = req.query.bargainType; // 'keyword' | 'price'
   const spaceName = req.query.spaceName;
   const dongName = req.query.dongName;
   const priceExpr = 'COALESCE(NULLIF(deal_price,0), warranty_price)';
@@ -557,6 +587,8 @@ async function handleComplexArticles(req, res) {
   let idx = 2;
   if (tradeType !== 'all') { where.push(`trade_type=$${idx++}`); params.push(tradeType); }
   if (bargainOnly) where.push('is_bargain = true');
+  if (bargainType === 'keyword') where.push("bargain_keyword IS NOT NULL");
+  if (bargainType === 'price') where.push("bargain_type IN ('price', 'both')");
   if (spaceName) { where.push(`space_name = $${idx++}`); params.push(spaceName); }
   if (dongName) { where.push(`dong_name = $${idx++}`); params.push(dongName); }
   params.push(100);
@@ -564,7 +596,7 @@ async function handleComplexArticles(req, res) {
     SELECT id, article_no, trade_type, deal_price, warranty_price, rent_price,
       formatted_price, exclusive_space, space_name, dong_name,
       target_floor, total_floor, direction, description,
-      is_bargain, bargain_keyword, bargain_score, score_factors, first_seen_at,
+      is_bargain, bargain_keyword, bargain_type, bargain_score, score_factors, first_seen_at,
       (SELECT count(*)::int FROM price_history ph WHERE ph.article_id = articles.id) AS price_change_count
     FROM articles
     WHERE ${where.join(' AND ')}
@@ -723,6 +755,39 @@ async function handleRealTransactions(req, res) {
   res.json(rows);
 }
 
+async function handleRealTxIndividual(req, res) {
+  const pool = getPool();
+  const { aptNm, sggCd, excluUseAr, months = 12, complexId } = req.query;
+  let where = [];
+  let params = [];
+  let idx = 1;
+
+  if (complexId) { where.push(`complex_id = $${idx++}`); params.push(parseInt(complexId)); }
+  else if (aptNm) { where.push(`apt_nm = $${idx++}`); params.push(aptNm); }
+  if (!complexId && sggCd) { where.push(`sgg_cd = $${idx++}`); params.push(sggCd); }
+  if (excluUseAr) {
+    const area = parseFloat(excluUseAr);
+    where.push(`exclu_use_ar BETWEEN $${idx++} AND $${idx++}`);
+    params.push(area - 3, area + 3);
+  }
+  const now = new Date();
+  const from = new Date(now.getFullYear(), now.getMonth() - parseInt(months), 1);
+  const fromYm = from.getFullYear() * 100 + (from.getMonth() + 1);
+  where.push(`(deal_year * 100 + deal_month) >= $${idx++}`);
+  params.push(fromYm);
+
+  const { rows } = await pool.query(`
+    SELECT deal_year, deal_month, deal_day,
+      deal_amount, floor, exclu_use_ar,
+      CASE WHEN cdeal_type = 'O' THEN true ELSE false END AS is_cancel
+    FROM real_transactions
+    WHERE ${where.join(' AND ')}
+    ORDER BY deal_year DESC, deal_month DESC, deal_day DESC NULLS LAST
+    LIMIT 100
+  `, params);
+  res.json(rows);
+}
+
 async function handleRealTxSummary(req, res) {
   const pool = getPool();
   const { aptNm, sggCd, excluUseAr } = req.query;
@@ -764,13 +829,14 @@ async function handleRealTxCount(_req, res) {
 
 async function handleRealTxPriceTrend(req, res) {
   const pool = getPool();
-  const { aptNm, sggCd, excluUseAr, months = 12 } = req.query;
+  const { aptNm, sggCd, excluUseAr, months = 12, complexId } = req.query;
   let where = [];
   let params = [];
   let idx = 1;
 
-  if (aptNm) { where.push(`apt_nm = $${idx++}`); params.push(aptNm); }
-  if (sggCd) { where.push(`sgg_cd = $${idx++}`); params.push(sggCd); }
+  if (complexId) { where.push(`complex_id = $${idx++}`); params.push(parseInt(complexId)); }
+  else if (aptNm) { where.push(`apt_nm = $${idx++}`); params.push(aptNm); }
+  if (!complexId && sggCd) { where.push(`sgg_cd = $${idx++}`); params.push(sggCd); }
   if (excluUseAr) {
     const area = parseFloat(excluUseAr);
     where.push(`exclu_use_ar BETWEEN $${idx++} AND $${idx++}`);
@@ -1233,13 +1299,15 @@ async function handleRegionalDongArticles(req, res) {
 
 async function handleSidoHeatmap(req, res) {
   const bt = req.query.bargain_type || 'all';
-  const data = await cached(`map:sido:${bt}`, 600_000, async () => {
+  const pt = req.query.property_type || '';
+  const data = await cached(`map:sido:${bt}:${pt}`, 600_000, async () => {
     const pool = getPool();
     const bargainFilter = bt === 'keyword'
       ? `a.bargain_type IN ('keyword', 'both')`
       : bt === 'price'
       ? `a.bargain_type IN ('price', 'both')`
       : `a.is_bargain = true`;
+    const ptFilter = (pt === 'APT' || pt === 'OPST') ? `AND c.property_type = '${pt}'` : '';
     const { rows } = await pool.query(`
       SELECT
         c.city AS sido_name,
@@ -1255,7 +1323,7 @@ async function handleSidoHeatmap(req, res) {
         count(DISTINCT c.id)::int AS complex_count
       FROM complexes c
       LEFT JOIN articles a ON a.complex_id = c.id AND a.trade_type = 'A1'
-      WHERE c.is_active = true AND c.city IS NOT NULL
+      WHERE c.is_active = true AND c.city IS NOT NULL ${ptFilter}
       GROUP BY c.city
       ORDER BY count(*) FILTER (WHERE ${bargainFilter} AND a.article_status = 'active') DESC
     `);
@@ -1268,13 +1336,15 @@ async function handleSigunguHeatmap(req, res) {
   const { sido } = req.query;
   if (!sido) return res.status(400).json({ error: 'sido required' });
   const bt = req.query.bargain_type || 'all';
-  const data = await cached(`map:sigungu:${sido}:${bt}`, 300_000, async () => {
+  const pt = req.query.property_type || '';
+  const data = await cached(`map:sigungu:${sido}:${bt}:${pt}`, 300_000, async () => {
     const pool = getPool();
     const bargainFilter = bt === 'keyword'
       ? `a.bargain_type IN ('keyword', 'both')`
       : bt === 'price'
       ? `a.bargain_type IN ('price', 'both')`
       : `a.is_bargain = true`;
+    const ptFilter = (pt === 'APT' || pt === 'OPST') ? `AND c.property_type = '${pt}'` : '';
     const { rows } = await pool.query(`
       SELECT
         c.division AS sgg_name,
@@ -1290,7 +1360,7 @@ async function handleSigunguHeatmap(req, res) {
         count(DISTINCT c.id)::int AS complex_count
       FROM complexes c
       LEFT JOIN articles a ON a.complex_id = c.id AND a.trade_type = 'A1'
-      WHERE c.is_active = true AND c.city = $1
+      WHERE c.is_active = true AND c.city = $1 ${ptFilter}
       GROUP BY c.division
       ORDER BY count(*) FILTER (WHERE ${bargainFilter} AND a.article_status = 'active') DESC
     `, [sido]);
@@ -1300,11 +1370,17 @@ async function handleSigunguHeatmap(req, res) {
 }
 
 async function handleSigunguComplexes(req, res) {
-  const { sggCd, division, city, bargain_type } = req.query;
+  const { sggCd, division, city, bargain_type, property_type } = req.query;
   const divisionFilter = division || sggCd;
   if (!divisionFilter) return res.status(400).json({ error: 'division or sggCd required' });
   const bt = bargain_type || 'all';
-  const cacheKey = `map:complexes:${divisionFilter}:${city || ''}:${bt}`;
+  const pt = property_type || '';
+  const bargainFilter = bt === 'keyword'
+    ? `a.bargain_type IN ('keyword', 'both')`
+    : bt === 'price'
+    ? `a.bargain_type IN ('price', 'both')`
+    : `a.is_bargain = true`;
+  const cacheKey = `map:complexes:${divisionFilter}:${city || ''}:${bt}:${pt}`;
   const data = await cached(cacheKey, 300_000, async () => {
     const pool = getPool();
     const limit = Math.min(parseInt(req.query.limit) || 50, 200);
@@ -1312,6 +1388,7 @@ async function handleSigunguComplexes(req, res) {
     let params = [divisionFilter];
     let idx = 2;
     if (city) { where.push(`c.city = $${idx++}`); params.push(city); }
+    if (pt === 'APT' || pt === 'OPST') { where.push(`c.property_type = $${idx++}`); params.push(pt); }
     if (bt === 'price') {
       where.push(`EXISTS (SELECT 1 FROM articles a2 WHERE a2.complex_id = c.id AND a2.article_status = 'active' AND a2.bargain_type IN ('price','both'))`);
     } else if (bt === 'keyword') {
@@ -1325,10 +1402,12 @@ async function handleSigunguComplexes(req, res) {
         c.complex_name,
         c.lat, c.lon,
         count(*) FILTER (WHERE a.article_status = 'active')::int AS total_articles,
-        count(*) FILTER (WHERE a.is_bargain = true AND a.article_status = 'active')::int AS bargain_count,
+        count(*) FILTER (WHERE ${bargainFilter} AND a.article_status = 'active')::int AS bargain_count,
+        count(*) FILTER (WHERE a.bargain_type IN ('keyword','both') AND a.article_status = 'active')::int AS keyword_count,
+        count(*) FILTER (WHERE a.bargain_type IN ('price','both') AND a.article_status = 'active')::int AS price_count,
         CASE WHEN count(*) FILTER (WHERE a.article_status = 'active') > 0
           THEN round(
-            count(*) FILTER (WHERE a.is_bargain = true AND a.article_status = 'active')::numeric
+            count(*) FILTER (WHERE ${bargainFilter} AND a.article_status = 'active')::numeric
             / count(*) FILTER (WHERE a.article_status = 'active')::numeric * 100, 1
           )
           ELSE 0
@@ -1338,12 +1417,48 @@ async function handleSigunguComplexes(req, res) {
       LEFT JOIN articles a ON a.complex_id = c.id AND a.trade_type = 'A1'
       WHERE ${where.join(' AND ')}
       GROUP BY c.id, c.complex_name, c.lat, c.lon
-      ORDER BY count(*) FILTER (WHERE a.is_bargain = true AND a.article_status = 'active') DESC, total_articles DESC
+      ORDER BY count(*) FILTER (WHERE ${bargainFilter} AND a.article_status = 'active') DESC, total_articles DESC
       LIMIT $${idx}
     `, params);
     return rows;
   });
   res.json(data);
+}
+
+async function handleMapBargainsInBounds(req, res) {
+  const { minLat, maxLat, minLon, maxLon, bargain_type } = req.query;
+  if (!minLat || !maxLat || !minLon || !maxLon) return res.status(400).json({ error: 'bounds required' });
+  const bt = bargain_type || 'all';
+  const bargainFilter = bt === 'keyword'
+    ? `a.bargain_type IN ('keyword', 'both')`
+    : bt === 'price'
+    ? `a.bargain_type IN ('price', 'both')`
+    : `a.is_bargain = true`;
+
+  const pool = getPool();
+  const { rows } = await pool.query(`
+    SELECT c.id AS complex_id, c.complex_name, c.lat, c.lon,
+      count(*) FILTER (WHERE a.article_status='active')::int AS total_articles,
+      count(*) FILTER (WHERE ${bargainFilter} AND a.article_status='active')::int AS bargain_count,
+      count(*) FILTER (WHERE a.bargain_type IN ('keyword','both') AND a.article_status='active')::int AS keyword_count,
+      count(*) FILTER (WHERE a.bargain_type IN ('price','both') AND a.article_status='active')::int AS price_count,
+      CASE WHEN count(*) FILTER (WHERE a.article_status = 'active') > 0
+        THEN round(
+          count(*) FILTER (WHERE ${bargainFilter} AND a.article_status = 'active')::numeric
+          / count(*) FILTER (WHERE a.article_status = 'active')::numeric * 100, 1
+        )
+        ELSE 0
+      END AS bargain_ratio,
+      round(avg(a.deal_price) FILTER (WHERE a.deal_price > 0 AND a.article_status='active'))::bigint AS avg_price
+    FROM complexes c
+    LEFT JOIN articles a ON a.complex_id = c.id AND a.trade_type = 'A1'
+    WHERE c.is_active = true AND c.lat BETWEEN $1 AND $2 AND c.lon BETWEEN $3 AND $4
+      AND EXISTS (SELECT 1 FROM articles a2 WHERE a2.complex_id=c.id AND a2.article_status='active' AND ${bargainFilter.replace(/\ba\./g, 'a2.')})
+    GROUP BY c.id
+    ORDER BY bargain_count DESC
+    LIMIT 50
+  `, [parseFloat(minLat), parseFloat(maxLat), parseFloat(minLon), parseFloat(maxLon)]);
+  res.json(rows);
 }
 
 // ════════════════════════════════════════
@@ -1627,4 +1742,75 @@ async function handleCommunityUnlike(req, res) {
     [req.params.id]
   );
   res.json({ like_count, liked: false });
+}
+
+// ════════════════════════════════════════
+// Regional Top Bargains
+// ════════════════════════════════════════
+
+async function handleRegionalTopBargains(req, res) {
+  const pool = getPool();
+  const { sido, sigungu, limit: lim, property_type } = req.query;
+  if (!sido) return res.status(400).json({ error: 'sido required' });
+  const limit = Math.min(parseInt(lim) || 10, 50);
+
+  const params = [sido, limit];
+  let idx = 3;
+  let divisionFilter = '';
+  let ptFilter = '';
+  if (sigungu) {
+    divisionFilter = `AND c.division = $${idx++}`;
+    params.push(sigungu);
+  }
+  if (property_type === 'APT' || property_type === 'OPST') {
+    ptFilter = `AND c.property_type = $${idx++}`;
+    params.push(property_type);
+  }
+
+  const { rows } = await pool.query(`
+    SELECT a.id, a.deal_price, a.formatted_price, a.exclusive_space,
+      a.target_floor, a.total_floor, a.bargain_score, a.bargain_keyword,
+      a.bargain_type, a.first_seen_at,
+      c.complex_name, c.id AS complex_id, c.division
+    FROM articles a
+    JOIN complexes c ON c.id = a.complex_id
+    WHERE a.article_status = 'active' AND a.trade_type = 'A1'
+      AND a.is_bargain = true
+      AND a.bargain_type IN ('price', 'both')
+      AND a.first_seen_at >= NOW() - INTERVAL '7 days'
+      AND c.city = $1
+      ${divisionFilter}
+      ${ptFilter}
+    ORDER BY a.bargain_score DESC
+    LIMIT $2
+  `, params);
+  res.json(rows);
+}
+
+async function handleRegionalTopDivisions(req, res) {
+  const pool = getPool();
+  const { sido, property_type } = req.query;
+  if (!sido) return res.status(400).json({ error: 'sido required' });
+
+  const params = [sido];
+  let ptFilter = '';
+  if (property_type === 'APT' || property_type === 'OPST') {
+    ptFilter = `AND c.property_type = $2`;
+    params.push(property_type);
+  }
+
+  const { rows } = await pool.query(`
+    SELECT c.division, count(*)::int AS bargain_count
+    FROM articles a
+    JOIN complexes c ON c.id = a.complex_id
+    WHERE a.article_status = 'active' AND a.trade_type = 'A1'
+      AND a.is_bargain = true
+      AND a.bargain_type IN ('price', 'both')
+      AND a.first_seen_at >= NOW() - INTERVAL '7 days'
+      AND c.city = $1
+      ${ptFilter}
+    GROUP BY c.division
+    ORDER BY bargain_count DESC
+  `, params);
+  res.json(rows);
 }

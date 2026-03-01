@@ -7,13 +7,13 @@ export default function BargainBadge({ keyword, bargainType }: Props) {
   const badges: React.ReactElement[] = [];
 
   if (keyword) {
-    badges.push(<span key="kw" className="badge badge--red">{keyword}</span>);
+    badges.push(<span key="kw" className="badge badge--red" title={keyword}>키워드 급매</span>);
   }
 
   if (bargainType === 'price' || bargainType === 'both') {
     badges.push(
       <span key="price" className="badge badge--orange" style={{ background: 'var(--orange-100, #fff3e0)', color: 'var(--orange-600, #e65100)' }}>
-        가격↓
+        가격 급매
       </span>
     );
   }

@@ -16,14 +16,14 @@ export default function PriceAssessment({ assessment }: Props) {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-12)' }}>
           {/* vs complex avg */}
           <div style={{ background: 'var(--gray-50)', borderRadius: 'var(--radius-md)', padding: 'var(--space-12)' }}>
-            <div className="text-xs text-gray" style={{ marginBottom: 4 }}>단지 평균 대비</div>
+            <div className="text-xs text-gray" style={{ marginBottom: 4 }}>동일 단지 호가 대비</div>
             {assessment.complex_avg_price ? (
               <>
                 <div style={{ fontWeight: 700, fontSize: 'var(--text-lg)', color: assessment.discount_vs_complex != null && assessment.discount_vs_complex < 0 ? 'var(--blue-600)' : 'var(--red-500)' }}>
                   {formatPercent(assessment.discount_vs_complex)}
                 </div>
                 <div className="text-xs text-gray">
-                  평균 {formatWon(assessment.complex_avg_price)} ({assessment.complex_listing_count}건)
+                  동일평형 평균 {formatWon(assessment.complex_avg_price)} ({assessment.complex_listing_count}건)
                 </div>
               </>
             ) : (
@@ -40,7 +40,7 @@ export default function PriceAssessment({ assessment }: Props) {
                   {formatPercent(assessment.discount_vs_transaction)}
                 </div>
                 <div className="text-xs text-gray">
-                  실거래 평균 {formatWon(assessment.tx_avg_price)} ({assessment.tx_count}건)
+                  최근 5건 평균 {formatWon(assessment.tx_avg_price)} ({assessment.tx_count}건)
                 </div>
               </>
             ) : (

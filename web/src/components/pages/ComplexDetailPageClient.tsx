@@ -1,8 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { useComplex, useComplexArticles, useComplexPyeongTypes, useComplexDongs } from '@/hooks/useComplex';
+import { useComplex, useComplexArticles, useComplexPyeongTypes, useComplexDongs, trackComplexView } from '@/hooks/useComplex';
 import { useMarketStats, useMarketAreaTypes, useMarketTrend, useMarketTransactions, useMarketFloorAnalysis } from '@/hooks/useMarketPrices';
 import { useWatchlist } from '@/hooks/useWatchlist';
 import { formatPrice, formatTradePrice, formatArea, relativeDate } from '@/utils/format';
@@ -19,19 +19,22 @@ export default function ComplexDetailPage() {
   const nav = useRouter();
   const { data: complex, loading } = useComplex(id);
   const [activeTab, setActiveTab] = useState<Tab>('articles');
-  const [tradeFilter, setTradeFilter] = useState('A1'); // all, A1, B1, B2, bargain
-  const effectiveTradeType = tradeFilter === 'bargain' ? 'A1' : tradeFilter;
-  const effectiveBargainOnly = tradeFilter === 'bargain';
+  const [tradeFilter, setTradeFilter] = useState('A1'); // all, A1, B1, B2, bargain_keyword, bargain_price
+  const effectiveTradeType = tradeFilter.startsWith('bargain') ? 'A1' : tradeFilter;
+  const effectiveBargainOnly = false;
+  const effectiveBargainType = tradeFilter === 'bargain_keyword' ? 'keyword' : tradeFilter === 'bargain_price' ? 'price' : undefined;
   const [articleSort, setArticleSort] = useState('price_asc');
   const [selectedSpaceName, setSelectedSpaceName] = useState<string | undefined>(undefined);
   const [selectedDongName, setSelectedDongName] = useState<string | undefined>(undefined);
   const [scoreTooltipId, setScoreTooltipId] = useState<number | null>(null);
-  const { data: articles, loading: articlesLoading } = useComplexArticles(id, effectiveTradeType, articleSort, effectiveBargainOnly, selectedSpaceName, selectedDongName);
+  const { data: articles, loading: articlesLoading } = useComplexArticles(id, effectiveTradeType, articleSort, effectiveBargainOnly, selectedSpaceName, selectedDongName, effectiveBargainType);
   const { data: pyeongTypes } = useComplexPyeongTypes(id);
   const { data: dongs } = useComplexDongs(id);
   const { has, add, remove } = useWatchlist();
 
   const isWatched = id ? has(Number(id)) : false;
+
+  useEffect(() => { if (id) trackComplexView(id); }, [id]);
 
   const dropdownStyle: React.CSSProperties = {
     padding: '6px 12px',
@@ -101,59 +104,59 @@ export default function ComplexDetailPage() {
         {/* Articles Tab */}
         {activeTab === 'articles' && (
           <>
-            {/* Row 1: 거래유형 + 정렬 */}
-            <div className="flex items-center gap-8" style={{ marginBottom: 'var(--space-8)' }}>
-              <select
-                value={tradeFilter}
-                onChange={e => setTradeFilter(e.target.value)}
-                style={dropdownStyle}
-              >
-                <option value="all">전체</option>
-                <option value="A1">매매</option>
-                <option value="B1">전세</option>
-                <option value="B2">월세</option>
-                <option value="bargain">급매만</option>
-              </select>
+            {/* Filters: single row, scrollable left + sort right */}
+            <div className="flex items-center gap-8" style={{ marginBottom: 'var(--space-12)' }}>
+              <div className="flex items-center gap-6 scroll-x" style={{ flex: 1, minWidth: 0, paddingBottom: 2 }}>
+                <select
+                  value={tradeFilter}
+                  onChange={e => setTradeFilter(e.target.value)}
+                  style={{ ...dropdownStyle, flex: 'none', width: 'auto' }}
+                >
+                  <option value="all">전체</option>
+                  <option value="A1">매매</option>
+                  <option value="B1">전세</option>
+                  <option value="B2">월세</option>
+                  <option value="bargain_keyword">키워드 급매</option>
+                  <option value="bargain_price">가격 급매</option>
+                </select>
+                {pyeongTypes.length > 1 && (
+                  <select
+                    value={selectedSpaceName ?? ''}
+                    onChange={e => setSelectedSpaceName(e.target.value || undefined)}
+                    style={{ ...dropdownStyle, flex: 'none', width: 'auto' }}
+                  >
+                    <option value="">전체면적</option>
+                    {pyeongTypes.map(pt => (
+                      <option key={pt.space_name} value={pt.space_name}>
+                        {pt.pyeong}평 {pt.space_name} ({pt.article_count})
+                      </option>
+                    ))}
+                  </select>
+                )}
+                {dongs.length > 1 && (
+                  <select
+                    value={selectedDongName ?? ''}
+                    onChange={e => setSelectedDongName(e.target.value || undefined)}
+                    style={{ ...dropdownStyle, flex: 'none', width: 'auto' }}
+                  >
+                    <option value="">전체동</option>
+                    {dongs.map(d => (
+                      <option key={d.dong_name} value={d.dong_name}>
+                        {d.dong_name} ({d.article_count})
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
               <select
                 value={articleSort}
                 onChange={e => setArticleSort(e.target.value)}
-                style={dropdownStyle}
+                style={{ ...dropdownStyle, flex: 'none', width: 'auto' }}
               >
                 <option value="price_asc">낮은가격순</option>
                 <option value="price_desc">높은가격순</option>
                 <option value="newest">최신순</option>
               </select>
-            </div>
-            {/* Row 2: 평형 + 동 */}
-            <div className="flex items-center gap-8" style={{ marginBottom: 'var(--space-12)' }}>
-              {pyeongTypes.length > 1 && (
-                <select
-                  value={selectedSpaceName ?? ''}
-                  onChange={e => setSelectedSpaceName(e.target.value || undefined)}
-                  style={dropdownStyle}
-                >
-                  <option value="">전체면적</option>
-                  {pyeongTypes.map(pt => (
-                    <option key={pt.space_name} value={pt.space_name}>
-                      {pt.pyeong}평 {pt.space_name} ({pt.article_count})
-                    </option>
-                  ))}
-                </select>
-              )}
-              {dongs.length > 1 && (
-                <select
-                  value={selectedDongName ?? ''}
-                  onChange={e => setSelectedDongName(e.target.value || undefined)}
-                  style={dropdownStyle}
-                >
-                  <option value="">전체동</option>
-                  {dongs.map(d => (
-                    <option key={d.dong_name} value={d.dong_name}>
-                      {d.dong_name} ({d.article_count})
-                    </option>
-                  ))}
-                </select>
-              )}
             </div>
 
             {articlesLoading ? <LoadingSpinner /> : articles.length === 0 ? (
@@ -166,7 +169,7 @@ export default function ComplexDetailPage() {
                     <div className="flex items-center justify-between">
                       <span style={{ fontWeight: 600 }}>{formatTradePrice(a.trade_type, a.deal_price, a.warranty_price, a.rent_price)}</span>
                       <div className="flex items-center gap-4">
-                        <BargainBadge keyword={a.bargain_keyword} />
+                        <BargainBadge keyword={a.bargain_keyword} bargainType={a.bargain_type} />
                         {a.bargain_score > 0 && (
                           <span className="badge badge--gray" style={{ cursor: 'pointer' }}
                             onClick={(e) => { e.stopPropagation(); setScoreTooltipId(scoreTooltipId === a.id ? null : a.id); }}>
@@ -268,10 +271,10 @@ function MarketTab({ complexId }: { complexId: string }) {
           <div className="flex items-center justify-between" style={{ marginBottom: 'var(--space-8)' }}>
             <h4 style={{ fontWeight: 700, fontSize: 14 }}>실거래가 추이</h4>
             <div className="flex gap-4">
-              {[12, 24, 36].map(m => (
+              {[{ m: 12, l: '1년' }, { m: 24, l: '2년' }, { m: 36, l: '3년' }, { m: 120, l: '최대' }].map(({ m, l }) => (
                 <button key={m} className={`chip ${trendMonths === m ? 'chip--active' : ''}`}
                   onClick={() => setTrendMonths(m)} style={{ fontSize: 11, padding: '2px 8px' }}>
-                  {m}개월
+                  {l}
                 </button>
               ))}
             </div>
@@ -454,9 +457,10 @@ function PriceTrendChart({ data, transactions, width, height }: { data: MarketTr
 }
 
 function FloorScatterChart({ data, width, height }: { data: MarketFloorAnalysis[]; width: number; height: number }) {
-  const pad = { top: 10, right: 10, bottom: 30, left: 50 };
+  const chartHeight = Math.max(height, 260);
+  const pad = { top: 20, right: 15, bottom: 35, left: 50 };
   const cw = width - pad.left - pad.right;
-  const ch = height - pad.top - pad.bottom;
+  const ch = chartHeight - pad.top - pad.bottom;
 
   const prices = data.map(d => Number(d.avg_price));
   const floors = data.map(d => d.floor);
@@ -466,30 +470,66 @@ function FloorScatterChart({ data, width, height }: { data: MarketFloorAnalysis[
   const [fMin, fMax] = extent(floors);
   const maxTx = Math.max(...txCounts, 1);
 
-  const scaleX = linearScale([pMin - (pMax - pMin) * 0.05, pMax + (pMax - pMin) * 0.05], [0, cw]);
+  const pPad = (pMax - pMin) * 0.1 || 500;
+  const scaleX = linearScale([pMin - pPad, pMax + pPad], [0, cw]);
   const scaleY = linearScale([fMin - 1, fMax + 1], [ch, 0]);
 
   const overallAvg = prices.reduce((a, b) => a + b, 0) / prices.length;
 
+  // Generate floor ticks for horizontal grid
+  const floorTicks: number[] = [];
+  for (let f = fMin; f <= fMax; f++) floorTicks.push(f);
+
+  // Generate price ticks for X-axis
+  const xTicks = 4;
+  const xStep = (pMax + pPad - (pMin - pPad)) / xTicks || 1;
+
   return (
-    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} style={{ display: 'block' }}>
+    <svg width={width} height={chartHeight} viewBox={`0 0 ${width} ${chartHeight}`} style={{ display: 'block' }}>
+      {/* Horizontal grid lines at each floor */}
+      {floorTicks.map(f => {
+        const y = pad.top + scaleY(f);
+        return (
+          <g key={`grid-${f}`}>
+            <line x1={pad.left} y1={y} x2={width - pad.right} y2={y} stroke="var(--gray-100)" />
+            <text x={pad.left - 6} y={y + 3} textAnchor="end" fontSize={9} fill="var(--gray-400)">{f}</text>
+          </g>
+        );
+      })}
+
+      {/* X-axis price tick labels */}
+      {Array.from({ length: xTicks + 1 }).map((_, i) => {
+        const val = (pMin - pPad) + xStep * i;
+        const x = pad.left + scaleX(val);
+        return (
+          <text key={`xtick-${i}`} x={x} y={chartHeight - 6} textAnchor="middle" fontSize={9} fill="var(--gray-400)">
+            {formatPrice(val)}
+          </text>
+        );
+      })}
+
       {/* Average price line */}
       <line x1={pad.left + scaleX(overallAvg)} y1={pad.top} x2={pad.left + scaleX(overallAvg)} y2={pad.top + ch}
         stroke="var(--blue-300)" strokeDasharray="4 2" strokeWidth={1} />
-      <text x={pad.left + scaleX(overallAvg)} y={pad.top - 2} textAnchor="middle" fontSize={9} fill="var(--blue-500)">
+      <text x={pad.left + scaleX(overallAvg)} y={pad.top - 4} textAnchor="middle" fontSize={9} fill="var(--blue-500)">
         평균 {formatPrice(overallAvg)}
       </text>
 
-      {/* Scatter dots */}
+      {/* Scatter dots with color gradient */}
       {data.map((d, i) => {
         const cx = pad.left + scaleX(Number(d.avg_price));
         const cy = pad.top + scaleY(d.floor);
-        const r = Math.max(4, Math.min(12, (d.tx_count / maxTx) * 12));
+        const r = Math.max(5, Math.min(14, (d.tx_count / maxTx) * 14));
+        const priceDiff = Number(d.avg_price) - overallAvg;
+        const ratio = overallAvg > 0 ? priceDiff / overallAvg : 0;
+        // blue = below avg, red = above avg
+        const hue = ratio > 0 ? Math.max(0, 220 - ratio * 600) : Math.min(220, 220 - ratio * 600);
+        const color = `hsl(${Math.round(hue)}, 70%, 55%)`;
         return (
           <g key={i}>
-            <circle cx={cx} cy={cy} r={r} fill="var(--blue-500)" opacity={0.5} />
-            <text x={cx} y={cy - r - 2} textAnchor="middle" fontSize={8} fill="var(--gray-600)">
-              {d.floor}층
+            <circle cx={cx} cy={cy} r={r} fill={color} opacity={0.6} stroke="white" strokeWidth={1} />
+            <text x={cx + r + 3} y={cy + 3} fontSize={8} fill="var(--gray-600)">
+              {formatPrice(d.avg_price)} ({d.tx_count}건)
             </text>
           </g>
         );
@@ -498,6 +538,8 @@ function FloorScatterChart({ data, width, height }: { data: MarketFloorAnalysis[
       {/* Y axis label */}
       <text x={8} y={pad.top + ch / 2} textAnchor="middle" fontSize={9} fill="var(--gray-500)"
         transform={`rotate(-90 8 ${pad.top + ch / 2})`}>층수</text>
+      {/* X axis label */}
+      <text x={pad.left + cw / 2} y={chartHeight - 18} textAnchor="middle" fontSize={9} fill="var(--gray-500)">가격</text>
     </svg>
   );
 }

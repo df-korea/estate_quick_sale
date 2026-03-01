@@ -25,10 +25,15 @@ export default function ComplexList({ complexes }: Props) {
               {c.avg_price ? ` · 평균 ${formatWon(c.avg_price)}` : ''}
             </div>
           </div>
-          <div style={{ textAlign: 'right', flexShrink: 0, marginLeft: 12 }}>
-            {c.bargain_count > 0 && (
+          <div style={{ textAlign: 'right', flexShrink: 0, marginLeft: 12, display: 'flex', gap: 4 }}>
+            {(c.keyword_count > 0 || c.price_count > 0) ? (
+              <>
+                {c.keyword_count > 0 && <span className="badge badge--red">키워드 {c.keyword_count}</span>}
+                {c.price_count > 0 && <span className="badge badge--orange">가격 {c.price_count}</span>}
+              </>
+            ) : c.bargain_count > 0 ? (
               <span className="badge badge--red">급매 {c.bargain_count}</span>
-            )}
+            ) : null}
           </div>
         </div>
       ))}

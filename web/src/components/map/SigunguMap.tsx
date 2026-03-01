@@ -60,7 +60,7 @@ interface Props {
 }
 
 export default function SigunguMap({ sidoName, heatmap, onSelect }: Props) {
-  const { svgRef, viewBoxStr, onTouchStart, onTouchMove, onTouchEnd, scale } = useSvgPanZoom(WIDTH, HEIGHT);
+  const { svgRef, viewBoxStr, onTouchStart, onTouchMove, onTouchEnd, onWheel, scale } = useSvgPanZoom(WIDTH, HEIGHT);
   const inv = 1 / scale;
   const sidoCode = DB_TO_TOPO_CODE[sidoName];
   const view = sidoCode ? SIDO_VIEW[sidoCode] : null;
@@ -97,6 +97,7 @@ export default function SigunguMap({ sidoName, heatmap, onSelect }: Props) {
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
+      onWheel={onWheel}
     >
       {/* 시군구 지역 색칠 */}
       {filtered.map((feat, i) => {

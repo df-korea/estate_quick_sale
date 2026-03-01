@@ -66,7 +66,7 @@ interface Props {
 }
 
 export default function SidoMap({ heatmap, onSelect }: Props) {
-  const { svgRef, viewBoxStr, onTouchStart, onTouchMove, onTouchEnd, scale } = useSvgPanZoom(WIDTH, HEIGHT);
+  const { svgRef, viewBoxStr, onTouchStart, onTouchMove, onTouchEnd, onWheel, scale } = useSvgPanZoom(WIDTH, HEIGHT);
   const inv = 1 / scale; // inverse scale: keeps elements at constant screen size
 
   const dataMap = useMemo(() => {
@@ -83,6 +83,7 @@ export default function SidoMap({ heatmap, onSelect }: Props) {
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
+      onWheel={onWheel}
     >
       {/* 지역 색칠 */}
       {geoFeatures.map((feat, i) => {

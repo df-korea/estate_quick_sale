@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useComplexSearch } from '../hooks/useComplex';
+import { useComplexSearch, usePopularComplexes } from '../hooks/useComplex';
 import LoadingSpinner from '../components/LoadingSpinner';
 import EmptyState from '../components/EmptyState';
 
 export default function SearchPage() {
   const [query, setQuery] = useState('');
   const { results, loading } = useComplexSearch(query);
+  const { data: popularComplexes, loading: popularLoading } = usePopularComplexes();
   const nav = useNavigate();
 
   return (
@@ -84,9 +85,42 @@ export default function SearchPage() {
         )}
 
         {!loading && query.length === 0 && (
-          <div style={{ padding: 40, textAlign: 'center', color: 'var(--gray-400)' }}>
-            <div style={{ fontSize: 'var(--text-2xl)', marginBottom: 8 }}>검색</div>
-            <p className="text-sm">관심있는 단지명을 입력하세요</p>
+          <div>
+            {popularLoading ? <LoadingSpinner /> : popularComplexes.length > 0 ? (
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 'var(--text-md)', marginBottom: 'var(--space-12)' }}>
+                  실시간 인기 단지 <span className="text-sm text-gray" style={{ fontWeight: 400 }}>(최근 7일)</span>
+                </div>
+                {popularComplexes.map((c, i) => (
+                  <div key={c.id}
+                    className="flex items-center justify-between"
+                    style={{ padding: 'var(--space-12) 0', borderBottom: '1px solid var(--border)', cursor: 'pointer' }}
+                    onClick={() => nav(`/complex/${c.id}`)}>
+                    <div className="flex items-center gap-12">
+                      <span style={{ width: 24, fontWeight: 700, color: i < 3 ? 'var(--blue-500)' : 'var(--gray-400)', fontSize: 'var(--text-md)' }}>
+                        {i + 1}
+                      </span>
+                      <div>
+                        <div style={{ fontWeight: 600 }}>{c.complex_name}</div>
+                        <div className="text-sm text-gray">
+                          {c.property_type && `${c.property_type} · `}
+                          {c.total_households && `${c.total_households}세대`}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-sm text-gray" style={{ flexShrink: 0, textAlign: 'right' }}>
+                      {c.deal_count > 0 && <span>매매 {c.deal_count}</span>}
+                      {c.lease_count > 0 && <span style={{ marginLeft: 6 }}>전세 {c.lease_count}</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{ padding: 40, textAlign: 'center', color: 'var(--gray-400)' }}>
+                <div style={{ fontSize: 'var(--text-2xl)', marginBottom: 8 }}>검색</div>
+                <p className="text-sm">관심있는 단지명을 입력하세요</p>
+              </div>
+            )}
           </div>
         )}
       </div>

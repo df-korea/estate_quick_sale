@@ -103,6 +103,7 @@ export interface ComplexArticle {
   description: string | null;
   is_bargain: boolean;
   bargain_keyword: string | null;
+  bargain_type: 'keyword' | 'price' | 'both' | null;
   bargain_score: number;
   score_factors: { complex: number; tx: number; drops: number; magnitude: number } | null;
   first_seen_at: string;
@@ -158,6 +159,8 @@ export interface SigunguComplex {
   lon: number | null;
   total_articles: number;
   bargain_count: number;
+  keyword_count: number;
+  price_count: number;
   bargain_ratio: number;
   avg_price: number | null;
 }
@@ -291,6 +294,16 @@ export interface PriceTrendItem {
   avg_price_per_pyeong: number | null;
 }
 
+export interface IndividualTransaction {
+  deal_year: number;
+  deal_month: number;
+  deal_day: number | null;
+  deal_amount: number;
+  floor: number | null;
+  exclu_use_ar: number;
+  is_cancel: boolean;
+}
+
 /* ── Drill-down State ── */
 export type DrillLevel = 'sido' | 'sigungu' | 'complex';
 
@@ -299,6 +312,8 @@ export type TradeFilter = 'all' | 'A1' | 'B1' | 'B2';
 export type BargainSort = 'newest' | 'price_asc' | 'price_desc' | 'score_desc';
 
 export type BargainMode = 'all' | 'keyword' | 'price';
+
+export type PropertyType = 'all' | 'APT' | 'OPST';
 
 /* ── Region Bargain Group ── */
 export interface RegionBargainArticle {

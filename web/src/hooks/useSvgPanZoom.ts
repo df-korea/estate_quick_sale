@@ -117,6 +117,18 @@ export function useSvgPanZoom(baseWidth: number, baseHeight: number) {
     touchState.current.type = 'none';
   }, []);
 
+  const onWheel = useCallback((e: React.WheelEvent) => {
+    e.preventDefault();
+    const zoomFactor = e.deltaY > 0 ? 1.1 : 0.9;
+    const [svgX, svgY] = screenToSvg(e.clientX, e.clientY, viewBox);
+    const newW = Math.max(baseWidth / MAX_SCALE, Math.min(baseWidth, viewBox.w * zoomFactor));
+    const newH = newW * (baseHeight / baseWidth);
+    const scaleChange = newW / viewBox.w;
+    const nx = svgX - (svgX - viewBox.x) * scaleChange;
+    const ny = svgY - (svgY - viewBox.y) * scaleChange;
+    setViewBox(clampVB({ x: nx, y: ny, w: newW, h: newH }));
+  }, [viewBox, baseWidth, baseHeight, screenToSvg, clampVB]);
+
   const viewBoxStr = `${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`;
 
   return {
@@ -125,6 +137,7 @@ export function useSvgPanZoom(baseWidth: number, baseHeight: number) {
     onTouchStart,
     onTouchMove,
     onTouchEnd,
+    onWheel,
     scale,
     isZoomed: viewBox.w < baseWidth - 1,
   };

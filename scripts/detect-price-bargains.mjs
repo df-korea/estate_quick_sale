@@ -4,7 +4,7 @@
  *
  * 가격 기반 급매 판정 배치 스크립트.
  * 단지 내 동일평형 평균, 실거래가, 가격 인하 이력, 누적 인하율을 조합하여
- * bargain_score(0~100)를 산정하고 score >= 50이면 is_bargain = true로 설정.
+ * bargain_score(0~100)를 산정하고 score >= 40이면 is_bargain = true로 설정.
  *
  * Usage:
  *   node --env-file=.env scripts/detect-price-bargains.mjs            # 전체 실행
@@ -17,7 +17,7 @@ import { pool } from './db.mjs';
 const args = process.argv.slice(2);
 const DRY_RUN = args.includes('--dry-run');
 const VERBOSE = args.includes('--verbose');
-const THRESHOLD = 50;
+const THRESHOLD = 40;
 
 async function main() {
   console.log(`=== 가격 기반 급매 판정 [${DRY_RUN ? 'DRY-RUN' : 'LIVE'}] ===\n`);
@@ -53,23 +53,30 @@ async function main() {
     const { rows: [s1] } = await client.query('SELECT count(*)::int AS cnt FROM _complex_comparison WHERE peer_count >= 2');
     console.log(`  → ${s1.cnt}건 (peer >= 2)\n`);
 
-    // ── Step 2: 실거래 비교 (complexes.complex_name = rt.apt_nm, ±3㎡, 최근 6개월) ──
-    console.log('Step 2: 실거래가 비교...');
+    // ── Step 2: 실거래 비교 (최근 5건 평균, ±3㎡) ──
+    console.log('Step 2: 실거래가 비교 (최근 5건 평균)...');
     await client.query(`
       CREATE TEMP TABLE _tx_comparison AS
-      SELECT a.id AS article_id,
-        round(avg(tx.deal_amount * 10000))::bigint AS tx_avg_price_won,
-        count(tx.*)::int AS tx_count
-      FROM articles a
-      JOIN complexes c ON c.id = a.complex_id
-      JOIN real_transactions tx ON tx.apt_nm = COALESCE(c.rt_apt_nm, c.complex_name)
-        AND (c.sgg_cd IS NULL OR tx.sgg_cd = c.sgg_cd)
-        AND tx.exclu_use_ar BETWEEN a.exclusive_space - 3 AND a.exclusive_space + 3
-        AND (tx.deal_year * 100 + tx.deal_month) >= $1
-        AND (tx.cdeal_type IS NULL OR tx.cdeal_type != 'O')
-      WHERE a.article_status = 'active' AND a.trade_type = 'A1' AND a.deal_price > 0
-      GROUP BY a.id
-    `, [sixMonthsAgoYm]);
+      SELECT article_id,
+        round(avg(tx_price_won))::bigint AS tx_latest_price_won,
+        count(*)::int AS tx_count
+      FROM (
+        SELECT a.id AS article_id,
+          tx.deal_amount * 10000 AS tx_price_won,
+          ROW_NUMBER() OVER (PARTITION BY a.id ORDER BY tx.deal_year DESC, tx.deal_month DESC, tx.deal_day DESC NULLS LAST) AS rn
+        FROM articles a
+        JOIN complexes c ON c.id = a.complex_id
+        JOIN real_transactions tx ON (
+            tx.complex_id = c.id
+            OR (tx.complex_id IS NULL AND tx.apt_nm = COALESCE(c.rt_apt_nm, c.complex_name) AND (c.sgg_cd IS NULL OR tx.sgg_cd = c.sgg_cd))
+          )
+          AND tx.exclu_use_ar BETWEEN a.exclusive_space - 3 AND a.exclusive_space + 3
+          AND (tx.cdeal_type IS NULL OR tx.cdeal_type != 'O')
+        WHERE a.article_status = 'active' AND a.trade_type = 'A1' AND a.deal_price > 0
+      ) sub
+      WHERE rn <= 5
+      GROUP BY article_id
+    `);
     const { rows: [s2] } = await client.query('SELECT count(*)::int AS cnt FROM _tx_comparison WHERE tx_count >= 1');
     console.log(`  → ${s2.cnt}건 (실거래 매칭)\n`);
 
@@ -116,26 +123,26 @@ async function main() {
     const updateQuery = `
       WITH scores AS (
         SELECT a.id,
-          -- 1) 단지 내 비교 (최대 40점, 선형: 20%할인=40점)
+          -- 1) 단지 내 비교 (최대 40점, 0.5%=1점, 20%=40점)
           CASE
             WHEN cc.peer_count >= 2 AND cc.peer_avg_price > 0 AND a.deal_price < cc.peer_avg_price THEN
-              LEAST(round((1.0 - a.deal_price::numeric / cc.peer_avg_price) * 200)::int, 40)
+              LEAST(round((1.0 - a.deal_price::numeric / cc.peer_avg_price) / 0.005)::int, 40)
             ELSE 0
           END AS complex_score,
-          -- 2) 실거래 비교 (최대 35점, 선형: 15%할인=35점)
+          -- 2) 실거래 비교 (최대 40점, 0.5%=1점, 20%=40점)
           CASE
-            WHEN tc.tx_count >= 1 AND tc.tx_avg_price_won > 0 AND a.deal_price < tc.tx_avg_price_won THEN
-              LEAST(round((1.0 - a.deal_price::numeric / tc.tx_avg_price_won) / 0.15 * 35)::int, 35)
+            WHEN tc.tx_count >= 1 AND tc.tx_latest_price_won > 0 AND a.deal_price < tc.tx_latest_price_won THEN
+              LEAST(round((1.0 - a.deal_price::numeric / tc.tx_latest_price_won) / 0.005)::int, 40)
             ELSE 0
           END AS tx_score,
-          -- 3) 가격 인하 이력 (최대 20점, 선형: 인하 1회=4점)
+          -- 3) 가격 인하 이력 (최대 10점, 1회=2점, 5회=10점)
           CASE
-            WHEN pd.drop_count >= 1 THEN LEAST(pd.drop_count * 4, 20)
+            WHEN pd.drop_count >= 1 THEN LEAST(pd.drop_count * 2, 10)
             ELSE 0
           END AS drop_score,
-          -- 4) 누적 인하율 (최대 5점, 선형: 5%=1점)
+          -- 4) 누적 인하율 (최대 10점, 2%=1점, 20%=10점)
           CASE
-            WHEN dm.drop_pct > 0 THEN LEAST(round(dm.drop_pct / 5.0)::int, 5)
+            WHEN dm.drop_pct > 0 THEN LEAST(round(dm.drop_pct / 2.0)::int, 10)
             ELSE 0
           END AS magnitude_score
         FROM articles a
@@ -171,38 +178,21 @@ async function main() {
           SELECT a.id, a.deal_price, a.bargain_keyword, a.exclusive_space,
             c.complex_name,
             CASE
-              WHEN cc.peer_count >= 2 AND cc.peer_avg_price > 0 THEN
-                CASE
-                  WHEN (a.deal_price::numeric / cc.peer_avg_price) <= 0.85 THEN 40
-                  WHEN (a.deal_price::numeric / cc.peer_avg_price) <= 0.90 THEN 30
-                  WHEN (a.deal_price::numeric / cc.peer_avg_price) <= 0.95 THEN 20
-                  WHEN (a.deal_price::numeric / cc.peer_avg_price) < 1.00 THEN 5
-                  ELSE 0
-                END
+              WHEN cc.peer_count >= 2 AND cc.peer_avg_price > 0 AND a.deal_price < cc.peer_avg_price THEN
+                LEAST(round((1.0 - a.deal_price::numeric / cc.peer_avg_price) / 0.005)::int, 40)
               ELSE 0
             END AS complex_score,
             CASE
-              WHEN tc.tx_count >= 1 AND tc.tx_avg_price_won > 0 THEN
-                CASE
-                  WHEN (a.deal_price::numeric / tc.tx_avg_price_won) <= 0.90 THEN 35
-                  WHEN (a.deal_price::numeric / tc.tx_avg_price_won) <= 0.95 THEN 25
-                  WHEN (a.deal_price::numeric / tc.tx_avg_price_won) < 1.00 THEN 10
-                  ELSE 0
-                END
+              WHEN tc.tx_count >= 1 AND tc.tx_latest_price_won > 0 AND a.deal_price < tc.tx_latest_price_won THEN
+                LEAST(round((1.0 - a.deal_price::numeric / tc.tx_latest_price_won) / 0.005)::int, 40)
               ELSE 0
             END AS tx_score,
             CASE
-              WHEN pd.drop_count >= 5 THEN 20
-              WHEN pd.drop_count >= 4 THEN 17
-              WHEN pd.drop_count >= 3 THEN 15
-              WHEN pd.drop_count = 2 THEN 10
-              WHEN pd.drop_count = 1 THEN 5
+              WHEN pd.drop_count >= 1 THEN LEAST(pd.drop_count * 2, 10)
               ELSE 0
             END AS drop_score,
             CASE
-              WHEN dm.drop_pct >= 20 THEN 5
-              WHEN dm.drop_pct >= 10 THEN 3
-              WHEN dm.drop_pct >= 5 THEN 2
+              WHEN dm.drop_pct > 0 THEN LEAST(round(dm.drop_pct / 2.0)::int, 10)
               ELSE 0
             END AS magnitude_score
           FROM articles a
