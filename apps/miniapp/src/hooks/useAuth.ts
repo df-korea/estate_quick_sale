@@ -2,9 +2,10 @@ import { useState, useEffect, useCallback } from 'react';
 
 const TOKEN_KEY = 'auth_token';
 const USER_KEY = 'auth_user';
+// Toss WebView에서는 .ait가 토스 CDN에서 로드되므로 절대 URL 필요
 const API_BASE = import.meta.env.DEV
   ? ''
-  : 'https://estate-quick-sale.vercel.app';
+  : 'https://estate-rader.com';
 
 interface AuthUser {
   userId: number;

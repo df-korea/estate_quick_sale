@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useCommunityPosts } from '../hooks/useCommunity';
+import { getAuthToken } from '../hooks/useAuth';
 import CommunityPostCard from '../components/CommunityPostCard';
 import LoadingSpinner from '../components/LoadingSpinner';
 import InlineBannerAd from '../components/InlineBannerAd';
@@ -26,24 +27,28 @@ export default function CommunityPage() {
     return () => observer.disconnect();
   }, [handleObserver]);
 
+  const isLoggedIn = !!getAuthToken();
+
   return (
     <div className="page">
       <div className="page-header glass">
         <h1>게시판</h1>
-        <button
-          onClick={() => nav('/community/write')}
-          className="press-effect"
-          style={{
-            padding: '6px 14px',
-            background: 'var(--blue-500)',
-            color: 'white',
-            borderRadius: 'var(--radius-full)',
-            fontSize: 13,
-            fontWeight: 600,
-          }}
-        >
-          글쓰기
-        </button>
+        {isLoggedIn && (
+          <button
+            onClick={() => nav('/community/write')}
+            className="press-effect"
+            style={{
+              padding: '6px 14px',
+              background: 'var(--blue-500)',
+              color: 'white',
+              borderRadius: 'var(--radius-full)',
+              fontSize: 13,
+              fontWeight: 600,
+            }}
+          >
+            글쓰기
+          </button>
+        )}
       </div>
 
       <div className="page-content">

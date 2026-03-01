@@ -118,9 +118,23 @@ img { display: block; max-width: 100%; }
 }
 
 @media (min-width: 768px) {
+  body {
+    background: var(--gray-100);
+  }
   .mobile-frame {
     max-width: 480px;
     margin: 0 auto;
+    position: relative;
+    box-shadow: 0 0 40px rgba(0,0,0,0.08);
+  }
+  /* Fixed elements stay inside mobile-frame on desktop */
+  .fixed-bottom,
+  .fixed-top {
+    width: 100%;
+    max-width: 480px;
+    left: 50% !important;
+    right: auto !important;
+    transform: translateX(-50%);
   }
 }
 

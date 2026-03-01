@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useCommunityPost, createComment, toggleLike } from '../hooks/useCommunity';
 import type { CommunityComment } from '../hooks/useCommunity';
+import { getAuthToken } from '../hooks/useAuth';
 import ArticlePreviewCard from '../components/ArticlePreviewCard';
 import LoadingSpinner from '../components/LoadingSpinner';
 
@@ -13,6 +14,8 @@ export default function CommunityPostPage() {
   const [replyTo, setReplyTo] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [liking, setLiking] = useState(false);
+
+  const isLoggedIn = !!getAuthToken();
 
   if (loading) return <div className="page"><LoadingSpinner /></div>;
   if (!post) return <div className="page"><div className="page-content">게시글을 찾을 수 없습니다</div></div>;
@@ -83,28 +86,37 @@ export default function CommunityPostPage() {
           </div>
         )}
 
-        {/* Like button */}
+        {/* Like button — 로그인 시에만 표시 */}
         <div className="flex items-center gap-12" style={{ marginBottom: 'var(--space-16)', paddingBottom: 'var(--space-16)', borderBottom: '1px solid var(--border)' }}>
-          <button
-            onClick={handleLike}
-            className="press-effect flex items-center gap-6"
-            style={{
-              padding: '8px 16px',
-              borderRadius: 'var(--radius-full)',
-              border: `1px solid ${post.liked_by_me ? 'var(--red-400)' : 'var(--gray-200)'}`,
-              background: post.liked_by_me ? 'var(--red-50)' : 'transparent',
-              color: post.liked_by_me ? 'var(--red-500)' : 'var(--gray-600)',
-              fontSize: 13,
-              fontWeight: 500,
-            }}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24"
-              fill={post.liked_by_me ? 'currentColor' : 'none'}
-              stroke="currentColor" strokeWidth="2">
-              <path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z" />
-            </svg>
-            좋아요 {post.like_count}
-          </button>
+          {isLoggedIn ? (
+            <button
+              onClick={handleLike}
+              className="press-effect flex items-center gap-6"
+              style={{
+                padding: '8px 16px',
+                borderRadius: 'var(--radius-full)',
+                border: `1px solid ${post.liked_by_me ? 'var(--red-400)' : 'var(--gray-200)'}`,
+                background: post.liked_by_me ? 'var(--red-50)' : 'transparent',
+                color: post.liked_by_me ? 'var(--red-500)' : 'var(--gray-600)',
+                fontSize: 13,
+                fontWeight: 500,
+              }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24"
+                fill={post.liked_by_me ? 'currentColor' : 'none'}
+                stroke="currentColor" strokeWidth="2">
+                <path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z" />
+              </svg>
+              좋아요 {post.like_count}
+            </button>
+          ) : (
+            <span className="flex items-center gap-6 text-sm" style={{ color: 'var(--gray-400)' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z" />
+              </svg>
+              좋아요 {post.like_count}
+            </span>
+          )}
         </div>
 
         {/* Comments */}
@@ -125,71 +137,74 @@ export default function CommunityPostPage() {
                 comment={c}
                 onReply={() => setReplyTo(c.id)}
                 isReplyTarget={replyTo === c.id}
+                showReply={isLoggedIn}
               />
               {repliesMap[c.id]?.map(r => (
                 <div key={r.id} style={{ marginLeft: 24 }}>
-                  <CommentItem comment={r} onReply={() => setReplyTo(c.id)} />
+                  <CommentItem comment={r} onReply={() => setReplyTo(c.id)} showReply={isLoggedIn} />
                 </div>
               ))}
             </div>
           ))}
         </div>
 
-        {/* Comment input */}
-        <div style={{
-          position: 'sticky',
-          bottom: 'calc(var(--tab-height) + var(--safe-bottom) + 50px + 16px)',
-          background: 'var(--white)',
-          padding: '12px 0',
-          borderTop: '1px solid var(--border)',
-        }}>
-          {replyTo && (
-            <div className="flex items-center justify-between text-xs" style={{ marginBottom: 6, color: 'var(--blue-500)' }}>
-              <span>답글 작성 중</span>
-              <button onClick={() => setReplyTo(null)} style={{ color: 'var(--gray-400)' }}>취소</button>
+        {/* Comment input — 로그인 시에만 표시 */}
+        {isLoggedIn && (
+          <div style={{
+            position: 'sticky',
+            bottom: 'calc(var(--tab-height) + var(--safe-bottom) + 50px + 16px)',
+            background: 'var(--white)',
+            padding: '12px 0',
+            borderTop: '1px solid var(--border)',
+          }}>
+            {replyTo && (
+              <div className="flex items-center justify-between text-xs" style={{ marginBottom: 6, color: 'var(--blue-500)' }}>
+                <span>답글 작성 중</span>
+                <button onClick={() => setReplyTo(null)} style={{ color: 'var(--gray-400)' }}>취소</button>
+              </div>
+            )}
+            <div className="flex gap-8">
+              <input
+                type="text"
+                value={commentText}
+                onChange={e => setCommentText(e.target.value)}
+                placeholder={replyTo ? '답글을 입력하세요' : '댓글을 입력하세요'}
+                onKeyDown={e => e.key === 'Enter' && handleComment()}
+                style={{
+                  flex: 1,
+                  padding: '10px 14px',
+                  borderRadius: 'var(--radius-full)',
+                  border: '1px solid var(--gray-200)',
+                  background: 'var(--gray-50)',
+                  fontSize: 14,
+                  outline: 'none',
+                }}
+              />
+              <button
+                onClick={handleComment}
+                disabled={!commentText.trim() || submitting}
+                className="press-effect"
+                style={{
+                  padding: '10px 16px',
+                  background: commentText.trim() ? 'var(--blue-500)' : 'var(--gray-200)',
+                  color: 'white',
+                  borderRadius: 'var(--radius-full)',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  flexShrink: 0,
+                }}
+              >
+                등록
+              </button>
             </div>
-          )}
-          <div className="flex gap-8">
-            <input
-              type="text"
-              value={commentText}
-              onChange={e => setCommentText(e.target.value)}
-              placeholder={replyTo ? '답글을 입력하세요' : '댓글을 입력하세요'}
-              onKeyDown={e => e.key === 'Enter' && handleComment()}
-              style={{
-                flex: 1,
-                padding: '10px 14px',
-                borderRadius: 'var(--radius-full)',
-                border: '1px solid var(--gray-200)',
-                background: 'var(--gray-50)',
-                fontSize: 14,
-                outline: 'none',
-              }}
-            />
-            <button
-              onClick={handleComment}
-              disabled={!commentText.trim() || submitting}
-              className="press-effect"
-              style={{
-                padding: '10px 16px',
-                background: commentText.trim() ? 'var(--blue-500)' : 'var(--gray-200)',
-                color: 'white',
-                borderRadius: 'var(--radius-full)',
-                fontSize: 13,
-                fontWeight: 600,
-                flexShrink: 0,
-              }}
-            >
-              등록
-            </button>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );
 }
 
-function CommentItem({ comment, onReply, isReplyTarget }: { comment: CommunityComment; onReply: () => void; isReplyTarget?: boolean }) {
+function CommentItem({ comment, onReply, isReplyTarget, showReply = true }: { comment: CommunityComment; onReply: () => void; isReplyTarget?: boolean; showReply?: boolean }) {
   return (
     <div style={{
       padding: '10px 0',
@@ -205,7 +220,7 @@ function CommentItem({ comment, onReply, isReplyTarget }: { comment: CommunityCo
       </div>
       <p className="text-sm" style={{ lineHeight: 1.5, color: 'var(--gray-800)' }}>{comment.content}</p>
       <div className="flex items-center gap-12 text-xs text-gray" style={{ marginTop: 4 }}>
-        <button onClick={onReply} style={{ color: 'var(--gray-400)', fontSize: 11 }}>답글</button>
+        {showReply && <button onClick={onReply} style={{ color: 'var(--gray-400)', fontSize: 11 }}>답글</button>}
         {comment.like_count > 0 && <span>좋아요 {comment.like_count}</span>}
       </div>
     </div>

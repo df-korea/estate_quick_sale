@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /settings
+Disallow: /watchlist
+
+Sitemap: https://estate-rader.com/sitemap.xml

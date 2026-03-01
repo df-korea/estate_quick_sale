@@ -1,8 +1,9 @@
 import { getAuthToken } from '../hooks/useAuth';
 
+// Toss WebView에서는 .ait가 토스 CDN에서 로드되므로 절대 URL 필요
 const API_BASE = import.meta.env.DEV
   ? '/api'
-  : 'https://estate-quick-sale.vercel.app/api';
+  : 'https://estate-rader.com/api';
 
 function authHeaders(): Record<string, string> {
   const token = getAuthToken();

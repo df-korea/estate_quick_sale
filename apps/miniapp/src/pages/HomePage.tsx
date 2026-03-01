@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, lazy, Suspense } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { DrillLevel, BargainSort, BargainMode, DongRankingItem } from '../types';
 import { useBriefing } from '../hooks/useBriefing';
@@ -6,7 +6,7 @@ import { useFilteredBargains } from '../hooks/useBargains';
 import { useLeaderboard, useTopPriceDrops } from '../hooks/useAnalysis';
 import { useDongRankings, useDongArticles } from '../hooks/useDongRankings';
 import { formatWon, formatArea, abbreviateCity } from '../utils/format';
-import MapExplorer from '../components/map/MapExplorer';
+const MapExplorer = lazy(() => import('../components/map/MapExplorer'));
 import BargainCard from '../components/BargainCard';
 import FilterBar from '../components/FilterBar';
 import SectionHeader from '../components/SectionHeader';
@@ -75,7 +75,9 @@ export default function HomePage() {
 
         {/* Map Explorer */}
         <section className="section animate-fade-in-up stagger-1">
-          <MapExplorer onDrillChange={handleDrillChange} onBargainModeChange={handleBargainModeChange} />
+          <Suspense fallback={<div style={{ height: 320, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>지도 로딩중...</div>}>
+            <MapExplorer onDrillChange={handleDrillChange} onBargainModeChange={handleBargainModeChange} />
+          </Suspense>
         </section>
 
         {/* Dong Rankings */}

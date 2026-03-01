@@ -10,7 +10,13 @@
     },
     "Ref": {
       "command": "npx",
-      "args": ["-y", "mcp-remote", "https://api.ref.tools/mcp?apiKey=ref-071bf0cb8baa944c1c9b"]
+      "args": ["-ya", "mcp-remote", "https://api.ref.tools/mcp?apiKey=ref-071bf0cb8baa944c1c9b"]
+    },
+    "apps-in-toss": {
+      "type": "stdio",
+      "command": "ax",
+      "args": ["mcp", "start"],
+      "env": {}
     }
   }
 }
