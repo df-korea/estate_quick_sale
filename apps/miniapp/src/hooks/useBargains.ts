@@ -69,7 +69,7 @@ export function useFilteredBargains(params: FilteredParams) {
   return { data, loading, refetch: fetch };
 }
 
-export function useRegionalTopBargains(sido: string | null, sigungu: string | null, limit = 10, propertyType?: string) {
+export function useRegionalTopBargains(sido: string | null, sigungu: string | null, limit = 10, propertyType?: string, priceMin?: number | null, priceMax?: number | null) {
   const [data, setData] = useState<BargainArticle[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -79,11 +79,13 @@ export function useRegionalTopBargains(sido: string | null, sigungu: string | nu
     const qs = new URLSearchParams({ sido, limit: String(limit) });
     if (sigungu) qs.set('sigungu', sigungu);
     if (propertyType && propertyType !== 'all') qs.set('property_type', propertyType);
+    if (priceMin) qs.set('price_min', String(priceMin));
+    if (priceMax) qs.set('price_max', String(priceMax));
     apiFetch<BargainArticle[]>(`/bargains/regional-top?${qs}`)
       .then(setData)
       .catch(() => setData([]))
       .finally(() => setLoading(false));
-  }, [sido, sigungu, limit, propertyType]);
+  }, [sido, sigungu, limit, propertyType, priceMin, priceMax]);
 
   return { data, loading };
 }

@@ -429,7 +429,8 @@ async function handleArticleAssessment(req, res) {
     WHERE complex_id = $1 AND trade_type = 'A1' AND article_status = 'active'
       AND deal_price > 0
       AND exclusive_space BETWEEN $2::numeric - 3 AND $2::numeric + 3
-  `, [article.complex_id, parseFloat(article.exclusive_space) || 0]);
+      AND id != $3
+  `, [article.complex_id, parseFloat(article.exclusive_space) || 0, article.id]);
 
   const area = parseFloat(article.exclusive_space) || 0;
   const { rows: [txStats] } = await pool.query(`
@@ -445,39 +446,69 @@ async function handleArticleAssessment(req, res) {
     ) sub WHERE rn <= 5
   `, [article.complex_id, area]);
 
-  const { rows: [phCount] } = await pool.query(
-    `SELECT count(*)::int AS cnt FROM price_history WHERE article_id = $1`,
-    [article.id]
-  );
+  // Count actual price drops (not just total history entries)
+  const { rows: [dropStats] } = await pool.query(`
+    SELECT count(*)::int AS drop_count FROM (
+      SELECT deal_price, lag(deal_price) OVER (ORDER BY recorded_at) AS prev_price
+      FROM price_history WHERE article_id = $1
+    ) sub WHERE prev_price IS NOT NULL AND deal_price < prev_price
+  `, [article.id]);
+
+  // Magnitude: initial price vs current price drop percentage
+  const { rows: [magStats] } = await pool.query(`
+    SELECT CASE WHEN a.deal_price < ph.initial_price
+      THEN round((1 - a.deal_price::numeric / ph.initial_price) * 100, 1) ELSE 0 END AS drop_pct
+    FROM articles a, (
+      SELECT deal_price AS initial_price FROM price_history WHERE article_id = $1 ORDER BY recorded_at ASC LIMIT 1
+    ) ph WHERE a.id = $1
+  `, [article.id]);
 
   let score = 0;
   const factors = [];
+  const price = Number(article.deal_price);
 
-  const avgPrice = complexStats?.avg_price;
+  // 1) Complex score: linear 0.5%=1pt, max 40 (same as batch)
+  const avgPrice = Number(complexStats?.avg_price);
   let discountVsComplex = null;
-  if (avgPrice && article.deal_price && avgPrice > 0) {
-    discountVsComplex = ((article.deal_price - avgPrice) / avgPrice) * 100;
-    if (discountVsComplex < -15) { score += 40; factors.push({ name: '단지 대비 15%+ 저렴', value: 40 }); }
-    else if (discountVsComplex < -10) { score += 30; factors.push({ name: '단지 대비 10%+ 저렴', value: 30 }); }
-    else if (discountVsComplex < -5) { score += 20; factors.push({ name: '단지 대비 5%+ 저렴', value: 20 }); }
-    else if (discountVsComplex < 0) { score += 8; factors.push({ name: '단지 평균 이하', value: 8 }); }
+  if (avgPrice && price && avgPrice > 0) {
+    discountVsComplex = ((price - avgPrice) / avgPrice) * 100;
+    if (price < avgPrice && complexStats.count >= 2) {
+      const complexScore = Math.min(Math.round((1.0 - price / avgPrice) / 0.005), 40);
+      score += complexScore;
+      factors.push({ name: `단지 대비 ${Math.abs(Math.round(discountVsComplex * 10) / 10)}% 저렴`, value: complexScore });
+    }
   }
 
+  // 2) TX score: linear 0.5%=1pt, max 40 (same as batch)
   let discountVsTx = null;
-  const txAvgWon = txStats?.avg_tx_price ? txStats.avg_tx_price * 10000 : null;
-  if (txAvgWon && article.deal_price && txAvgWon > 0) {
-    discountVsTx = ((article.deal_price - txAvgWon) / txAvgWon) * 100;
-    if (discountVsTx < -10) { score += 40; factors.push({ name: '실거래 대비 10%+ 저렴', value: 40 }); }
-    else if (discountVsTx < -5) { score += 28; factors.push({ name: '실거래 대비 5%+ 저렴', value: 28 }); }
-    else if (discountVsTx < 0) { score += 12; factors.push({ name: '실거래 이하', value: 12 }); }
+  const txAvgWon = txStats?.avg_tx_price ? Number(txStats.avg_tx_price) * 10000 : null;
+  if (txAvgWon && price && txAvgWon > 0) {
+    discountVsTx = ((price - txAvgWon) / txAvgWon) * 100;
+    if (price < txAvgWon) {
+      const txScore = Math.min(Math.round((1.0 - price / txAvgWon) / 0.005), 40);
+      score += txScore;
+      factors.push({ name: `실거래 대비 ${Math.abs(Math.round(discountVsTx * 10) / 10)}% 저렴`, value: txScore });
+    }
   }
 
-  if (phCount.cnt >= 4) { score += 20; factors.push({ name: '호가 4회+ 변동', value: 20 }); }
-  else if (phCount.cnt >= 3) { score += 14; factors.push({ name: '호가 3회 변동', value: 14 }); }
-  else if (phCount.cnt >= 2) { score += 8; factors.push({ name: '호가 2회 변동', value: 8 }); }
+  // 3) Drop score: 1 drop = 2pts, max 10 (same as batch)
+  const dropCount = dropStats?.drop_count || 0;
+  if (dropCount >= 1) {
+    const dropScore = Math.min(dropCount * 2, 10);
+    score += dropScore;
+    factors.push({ name: `가격 ${dropCount}회 인하`, value: dropScore });
+  }
+
+  // 4) Magnitude score: 2% = 1pt, max 10 (same as batch)
+  const dropPct = magStats?.drop_pct || 0;
+  if (dropPct > 0) {
+    const magScore = Math.min(Math.round(dropPct / 2.0), 10);
+    score += magScore;
+    factors.push({ name: `누적 ${dropPct}% 인하`, value: magScore });
+  }
 
   const daysOnMarket = Math.floor((Date.now() - new Date(article.first_seen_at).getTime()) / 86400000);
-  const isLowest = complexStats?.min_price && article.deal_price && article.deal_price <= complexStats.min_price;
+  const isLowest = complexStats?.min_price && price && price <= Number(complexStats.min_price);
 
   res.json({
     score: Math.min(score, 100),
@@ -489,7 +520,7 @@ async function handleArticleAssessment(req, res) {
     tx_avg_price: txAvgWon || null,
     tx_count: txStats?.tx_count || 0,
     days_on_market: daysOnMarket,
-    price_change_count: phCount.cnt,
+    price_change_count: dropCount,
     is_lowest_in_complex: isLowest,
   });
 }
@@ -545,13 +576,13 @@ async function handleComplexPyeongTypes(req, res) {
   const pool = getPool();
   const { rows } = await pool.query(`
     SELECT COALESCE(NULLIF(space_name,''), ROUND(exclusive_space)::text || '㎡') AS space_name,
-      exclusive_space,
-      round(exclusive_space / 3.3058)::int AS pyeong,
+      MIN(exclusive_space) AS exclusive_space,
+      round(MIN(exclusive_space) / 3.3058)::int AS pyeong,
       count(*)::int AS article_count
     FROM articles
     WHERE complex_id = $1 AND article_status = 'active'
-    GROUP BY space_name, exclusive_space
-    ORDER BY exclusive_space ASC
+    GROUP BY COALESCE(NULLIF(space_name,''), ROUND(exclusive_space)::text || '㎡')
+    ORDER BY MIN(exclusive_space) ASC
   `, [req.params.id]);
   res.json(rows);
 }
@@ -768,7 +799,7 @@ async function handleRealTxIndividual(req, res) {
   if (excluUseAr) {
     const area = parseFloat(excluUseAr);
     where.push(`exclu_use_ar BETWEEN $${idx++} AND $${idx++}`);
-    params.push(area - 3, area + 3);
+    params.push(area - 2, area + 2);
   }
   const now = new Date();
   const from = new Date(now.getFullYear(), now.getMonth() - parseInt(months), 1);
@@ -1750,7 +1781,7 @@ async function handleCommunityUnlike(req, res) {
 
 async function handleRegionalTopBargains(req, res) {
   const pool = getPool();
-  const { sido, sigungu, limit: lim, property_type } = req.query;
+  const { sido, sigungu, limit: lim, property_type, price_min, price_max } = req.query;
   if (!sido) return res.status(400).json({ error: 'sido required' });
   const limit = Math.min(parseInt(lim) || 10, 50);
 
@@ -1758,6 +1789,7 @@ async function handleRegionalTopBargains(req, res) {
   let idx = 3;
   let divisionFilter = '';
   let ptFilter = '';
+  let priceFilter = '';
   if (sigungu) {
     divisionFilter = `AND c.division = $${idx++}`;
     params.push(sigungu);
@@ -1765,6 +1797,14 @@ async function handleRegionalTopBargains(req, res) {
   if (property_type === 'APT' || property_type === 'OPST') {
     ptFilter = `AND c.property_type = $${idx++}`;
     params.push(property_type);
+  }
+  if (price_min) {
+    priceFilter += ` AND a.deal_price >= $${idx++}`;
+    params.push(parseInt(price_min));
+  }
+  if (price_max) {
+    priceFilter += ` AND a.deal_price <= $${idx++}`;
+    params.push(parseInt(price_max));
   }
 
   const { rows } = await pool.query(`
@@ -1781,6 +1821,7 @@ async function handleRegionalTopBargains(req, res) {
       AND c.city = $1
       ${divisionFilter}
       ${ptFilter}
+      ${priceFilter}
     ORDER BY a.bargain_score DESC
     LIMIT $2
   `, params);
