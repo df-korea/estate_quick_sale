@@ -14,10 +14,6 @@ export async function apiFetch<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     headers: authHeaders(),
   });
-  if (res.status === 401) {
-    localStorage.removeItem('auth_token');
-    localStorage.removeItem('auth_user');
-  }
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }
@@ -31,10 +27,6 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
     },
     body: JSON.stringify(body),
   });
-  if (res.status === 401) {
-    localStorage.removeItem('auth_token');
-    localStorage.removeItem('auth_user');
-  }
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }
@@ -48,10 +40,6 @@ export async function apiPut<T>(path: string, body: unknown): Promise<T> {
     },
     body: JSON.stringify(body),
   });
-  if (res.status === 401) {
-    localStorage.removeItem('auth_token');
-    localStorage.removeItem('auth_user');
-  }
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     const err = new Error(data.error || `API error: ${res.status}`);
@@ -70,10 +58,6 @@ export async function apiDelete<T>(path: string, body?: unknown): Promise<T> {
     },
     body: body ? JSON.stringify(body) : undefined,
   });
-  if (res.status === 401) {
-    localStorage.removeItem('auth_token');
-    localStorage.removeItem('auth_user');
-  }
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }

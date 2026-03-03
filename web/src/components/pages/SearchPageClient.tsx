@@ -3,13 +3,16 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useComplexSearch, usePopularComplexes } from '@/hooks/useComplex';
+import { useWatchlist } from '@/hooks/useWatchlist';
 import LoadingSpinner from '@/components/LoadingSpinner';
 import EmptyState from '@/components/EmptyState';
+import { formatWon } from '@/utils/format';
 
 export default function SearchPage() {
   const [query, setQuery] = useState('');
   const { results, loading } = useComplexSearch(query);
   const { data: popularComplexes, loading: popularLoading } = usePopularComplexes();
+  const { data: watchlistData, loading: watchlistLoading } = useWatchlist();
   const nav = useRouter();
 
   return (
@@ -88,6 +91,43 @@ export default function SearchPage() {
 
         {!loading && query.length === 0 && (
           <div>
+            {/* 나의 관심 단지 */}
+            {!watchlistLoading && watchlistData.length > 0 && (
+              <div style={{ marginBottom: 'var(--space-24)' }}>
+                <div className="flex items-center justify-between" style={{ marginBottom: 'var(--space-12)' }}>
+                  <div style={{ fontWeight: 700, fontSize: 'var(--text-md)' }}>
+                    나의 관심 단지
+                  </div>
+                  <button onClick={() => nav.push('/watchlist')} className="text-sm" style={{ color: 'var(--blue-500)' }}>
+                    전체보기
+                  </button>
+                </div>
+                {watchlistData.slice(0, 5).map(w => (
+                  <div key={w.id}
+                    className="flex items-center justify-between"
+                    style={{ padding: 'var(--space-10) 0', borderBottom: '1px solid var(--border)', cursor: 'pointer' }}
+                    onClick={() => nav.push(`/complex/${w.complex_id}`)}>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div className="flex items-center gap-6">
+                        <span style={{ fontWeight: 600 }}>{w.complex_name}</span>
+                        {w.pyeong_type && <span className="text-xs text-gray">{w.pyeong_type}</span>}
+                      </div>
+                      <div className="text-sm text-gray" style={{ marginTop: 2 }}>
+                        매물 {w.total_articles} · 급매 {w.bargain_count}
+                        {w.min_price ? ` · 최저 ${formatWon(w.min_price)}` : ''}
+                      </div>
+                    </div>
+                    {w.new_today > 0 && (
+                      <span className="text-xs text-blue" style={{ flexShrink: 0, fontWeight: 600 }}>
+                        +{w.new_today}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* 인기 단지 */}
             {popularLoading ? <LoadingSpinner /> : popularComplexes.length > 0 ? (
               <div>
                 <div style={{ fontWeight: 700, fontSize: 'var(--text-md)', marginBottom: 'var(--space-12)' }}>

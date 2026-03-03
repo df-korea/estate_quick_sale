@@ -1,57 +1,53 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { apiFetch } from '../lib/api';
-import type { WatchlistComplex } from '../types';
-
-const STORAGE_KEY = 'watchlist_ids';
-
-function readIds(): number[] {
-  try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-  } catch {
-    return [];
-  }
-}
-
-function saveIds(ids: number[]) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(ids));
-}
+import { apiFetch, apiPost, apiDelete } from '../lib/api';
+import type { WatchlistItem } from '../types';
 
 export function useWatchlist() {
-  const [ids, setIds] = useState<number[]>(readIds);
-  const [data, setData] = useState<WatchlistComplex[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [data, setData] = useState<WatchlistItem[]>([]);
+  const [loading, setLoading] = useState(true);
 
   const fetchData = useCallback(async () => {
-    if (ids.length === 0) { setData([]); return; }
     setLoading(true);
     try {
-      setData(await apiFetch<WatchlistComplex[]>(`/bargains/by-complexes?ids=${ids.join(',')}`));
-    } catch { setData([]); }
+      setData(await apiFetch<WatchlistItem[]>('/watchlist'));
+    } catch {
+      setData([]);
+    }
     setLoading(false);
-  }, [ids]);
+  }, []);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const add = useCallback((id: number) => {
-    setIds(prev => {
-      if (prev.includes(id)) return prev;
-      const next = [...prev, id];
-      saveIds(next);
-      return next;
-    });
+  const add = useCallback(async (complexId: number, pyeongType?: string, propertyType?: string) => {
+    try {
+      await apiPost('/watchlist', {
+        complex_id: complexId,
+        pyeong_type: pyeongType || null,
+        property_type: propertyType || 'all',
+      });
+      await fetchData();
+    } catch (err) {
+      console.error('[useWatchlist] add failed:', err);
+      throw err;
+    }
+  }, [fetchData]);
+
+  const remove = useCallback(async (watchlistId: number) => {
+    try {
+      await apiDelete(`/watchlist/${watchlistId}`);
+      setData(prev => prev.filter(w => w.id !== watchlistId));
+    } catch (err) {
+      console.error('[useWatchlist] remove failed:', err);
+    }
   }, []);
 
-  const remove = useCallback((id: number) => {
-    setIds(prev => {
-      const next = prev.filter(x => x !== id);
-      saveIds(next);
-      return next;
-    });
-  }, []);
+  const has = useCallback(
+    (complexId: number, pyeongType?: string) =>
+      data.some(w => w.complex_id === complexId && (w.pyeong_type === (pyeongType || null))),
+    [data],
+  );
 
-  const has = useCallback((id: number) => ids.includes(id), [ids]);
-
-  return { ids, data, loading, add, remove, has, refetch: fetchData };
+  return { data, loading, add, remove, has, refetch: fetchData };
 }

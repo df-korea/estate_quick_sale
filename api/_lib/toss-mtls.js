@@ -58,8 +58,8 @@ function request(method, path, { body, headers = {} } = {}) {
   });
 }
 
-export function postWithMtls(path, body) {
-  return request('POST', path, { body });
+export function postWithMtls(path, body, headers) {
+  return request('POST', path, { body, headers });
 }
 
 export function getWithMtls(path, headers) {

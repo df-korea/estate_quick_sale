@@ -23,6 +23,29 @@ function bargainTypeCondition(bargainType, alias = 'a') {
 
 const CANCEL_FILTER = `(cdeal_type IS NULL OR cdeal_type = '' OR cdeal_type != 'O')`;
 
+// Division merge: 도 소속 "X시 Y구" → "X시" 통합
+const MERGED_DIVISION = `CASE
+  WHEN c.city LIKE '%도' AND c.division ~ '^.+시\\s+.+구$'
+  THEN split_part(c.division, ' ', 1)
+  ELSE c.division
+END`;
+
+function divisionCondition(division, city, idxStart) {
+  const isProvince = !city || city.endsWith('도');
+  if (isProvince && /시$/.test(division)) {
+    return {
+      clause: `(c.division = $${idxStart} OR c.division LIKE $${idxStart + 1})`,
+      params: [division, division + ' %'],
+      nextIdx: idxStart + 2
+    };
+  }
+  return {
+    clause: `c.division = $${idxStart}`,
+    params: [division],
+    nextIdx: idxStart + 1
+  };
+}
+
 // ── Path matching ──
 
 function matchPath(pattern, path) {
@@ -119,6 +142,15 @@ const routes = [
   { m: 'GET', p: '/community/posts/:id', h: handleCommunityPostDetail },
   { m: 'GET', p: '/community/posts', h: handleCommunityPosts },
   { m: 'POST', p: '/community/posts', h: handleCommunityCreatePost },
+
+  // Watchlist (server-based)
+  { m: 'GET', p: '/watchlist', h: handleGetWatchlist },
+  { m: 'POST', p: '/watchlist', h: handleAddWatchlist },
+  { m: 'DELETE', p: '/watchlist/:id', h: handleDeleteWatchlist },
+
+  // Notification Settings
+  { m: 'GET', p: '/notification-settings', h: handleGetNotificationSettings },
+  { m: 'PUT', p: '/notification-settings', h: handlePutNotificationSettings },
 ];
 
 export async function route(req, res, path) {
@@ -262,7 +294,12 @@ async function handleBargainsFiltered(req, res) {
   if (maxPrice) { where.push(`COALESCE(NULLIF(a.deal_price,0), a.warranty_price) <= $${idx++}`); params.push(parseInt(maxPrice)); }
   if (minArea) { where.push(`a.exclusive_space >= $${idx++}`); params.push(parseFloat(minArea)); }
   if (maxArea) { where.push(`a.exclusive_space <= $${idx++}`); params.push(parseFloat(maxArea)); }
-  if (district) { where.push(`c.division = $${idx++}`); params.push(district); }
+  if (district) {
+    const dc = divisionCondition(district, city, idx);
+    where.push(dc.clause);
+    params.push(...dc.params);
+    idx = dc.nextIdx;
+  }
   if (city) { where.push(`c.city = $${idx++}`); params.push(city); }
 
   const priceExpr = 'COALESCE(NULLIF(a.deal_price,0), a.warranty_price)';
@@ -305,8 +342,8 @@ async function handleBargainsByRegion(req, res) {
           a.exclusive_space, a.target_floor, a.total_floor, a.direction,
           a.description, a.bargain_keyword, a.bargain_type, a.bargain_score,
           a.first_seen_at,
-          c.complex_name, c.division, c.hscp_no,
-          ROW_NUMBER() OVER (PARTITION BY c.division ORDER BY a.bargain_score DESC NULLS LAST) AS rn
+          c.complex_name, ${MERGED_DIVISION} AS division, c.hscp_no,
+          ROW_NUMBER() OVER (PARTITION BY ${MERGED_DIVISION} ORDER BY a.bargain_score DESC NULLS LAST) AS rn
         FROM articles a
         JOIN complexes c ON a.complex_id = c.id
         WHERE a.is_bargain = true AND a.article_status = 'active'
@@ -1231,7 +1268,7 @@ async function handleDistrictHeatmap(_req, res) {
     const pool = getPool();
     const { rows } = await pool.query(`
       SELECT
-        c.division AS district,
+        ${MERGED_DIVISION} AS district,
         count(*) FILTER (WHERE a.article_status = 'active')::int AS total_articles,
         count(*) FILTER (WHERE a.is_bargain = true AND a.article_status = 'active')::int AS bargain_count,
         CASE WHEN count(*) FILTER (WHERE a.article_status = 'active') > 0
@@ -1246,7 +1283,7 @@ async function handleDistrictHeatmap(_req, res) {
       FROM complexes c
       LEFT JOIN articles a ON a.complex_id = c.id AND a.trade_type = 'A1'
       WHERE c.is_active = true AND c.division IS NOT NULL
-      GROUP BY c.division
+      GROUP BY ${MERGED_DIVISION}
       HAVING count(*) FILTER (WHERE a.article_status = 'active') > 0
       ORDER BY count(*) FILTER (WHERE a.is_bargain = true AND a.article_status = 'active') DESC
     `);
@@ -1260,6 +1297,7 @@ async function handleDistrictBargains(req, res) {
   const { district } = req.query;
   if (!district) return res.status(400).json({ error: 'district required' });
   const limit = Math.min(parseInt(req.query.limit) || 30, 100);
+  const dc = divisionCondition(district, null, 1);
   const { rows } = await pool.query(`
     SELECT a.id, a.article_no, a.deal_price, a.formatted_price, a.exclusive_space,
       a.target_floor, a.total_floor, a.direction, a.description, a.bargain_keyword, a.first_seen_at,
@@ -1267,10 +1305,10 @@ async function handleDistrictBargains(req, res) {
     FROM articles a
     JOIN complexes c ON a.complex_id = c.id
     WHERE a.is_bargain = true AND a.article_status = 'active'
-      AND c.division = $1 AND a.trade_type = 'A1'
+      AND ${dc.clause} AND a.trade_type = 'A1'
     ORDER BY a.first_seen_at DESC
-    LIMIT $2
-  `, [district, limit]);
+    LIMIT $${dc.nextIdx}
+  `, [...dc.params, limit]);
   res.json(rows);
 }
 
@@ -1378,7 +1416,7 @@ async function handleSigunguHeatmap(req, res) {
     const ptFilter = (pt === 'APT' || pt === 'OPST') ? `AND c.property_type = '${pt}'` : '';
     const { rows } = await pool.query(`
       SELECT
-        c.division AS sgg_name,
+        ${MERGED_DIVISION} AS sgg_name,
         count(*) FILTER (WHERE a.article_status = 'active')::int AS total_articles,
         count(*) FILTER (WHERE ${bargainFilter} AND a.article_status = 'active')::int AS bargain_count,
         CASE WHEN count(*) FILTER (WHERE a.article_status = 'active') > 0
@@ -1392,7 +1430,7 @@ async function handleSigunguHeatmap(req, res) {
       FROM complexes c
       LEFT JOIN articles a ON a.complex_id = c.id AND a.trade_type = 'A1'
       WHERE c.is_active = true AND c.city = $1 ${ptFilter}
-      GROUP BY c.division
+      GROUP BY ${MERGED_DIVISION}
       ORDER BY count(*) FILTER (WHERE ${bargainFilter} AND a.article_status = 'active') DESC
     `, [sido]);
     return rows;
@@ -1415,9 +1453,10 @@ async function handleSigunguComplexes(req, res) {
   const data = await cached(cacheKey, 300_000, async () => {
     const pool = getPool();
     const limit = Math.min(parseInt(req.query.limit) || 50, 200);
-    let where = ['c.division = $1', 'c.is_active = true'];
-    let params = [divisionFilter];
-    let idx = 2;
+    const dc = divisionCondition(divisionFilter, city, 1);
+    let where = [dc.clause, 'c.is_active = true'];
+    let params = [...dc.params];
+    let idx = dc.nextIdx;
     if (city) { where.push(`c.city = $${idx++}`); params.push(city); }
     if (pt === 'APT' || pt === 'OPST') { where.push(`c.property_type = $${idx++}`); params.push(pt); }
     if (bt === 'price') {
@@ -1524,10 +1563,10 @@ async function handleStats(_req, res) {
 async function handleDistricts(_req, res) {
   const pool = getPool();
   const { rows } = await pool.query(`
-    SELECT DISTINCT division AS district
-    FROM complexes
-    WHERE is_active = true AND division IS NOT NULL
-    ORDER BY division
+    SELECT DISTINCT ${MERGED_DIVISION} AS district
+    FROM complexes c
+    WHERE c.is_active = true AND c.division IS NOT NULL
+    ORDER BY 1
   `);
   res.json(rows.map(r => r.district));
 }
@@ -1791,8 +1830,10 @@ async function handleRegionalTopBargains(req, res) {
   let ptFilter = '';
   let priceFilter = '';
   if (sigungu) {
-    divisionFilter = `AND c.division = $${idx++}`;
-    params.push(sigungu);
+    const dc = divisionCondition(sigungu, sido, idx);
+    divisionFilter = `AND ${dc.clause}`;
+    params.push(...dc.params);
+    idx = dc.nextIdx;
   }
   if (property_type === 'APT' || property_type === 'OPST') {
     ptFilter = `AND c.property_type = $${idx++}`;
@@ -1811,7 +1852,7 @@ async function handleRegionalTopBargains(req, res) {
     SELECT a.id, a.deal_price, a.formatted_price, a.exclusive_space,
       a.target_floor, a.total_floor, a.bargain_score, a.bargain_keyword,
       a.bargain_type, a.first_seen_at,
-      c.complex_name, c.id AS complex_id, c.division
+      c.complex_name, c.id AS complex_id, ${MERGED_DIVISION} AS division
     FROM articles a
     JOIN complexes c ON c.id = a.complex_id
     WHERE a.article_status = 'active' AND a.trade_type = 'A1'
@@ -1841,7 +1882,7 @@ async function handleRegionalTopDivisions(req, res) {
   }
 
   const { rows } = await pool.query(`
-    SELECT c.division, count(*)::int AS bargain_count
+    SELECT ${MERGED_DIVISION} AS division, count(*)::int AS bargain_count
     FROM articles a
     JOIN complexes c ON c.id = a.complex_id
     WHERE a.article_status = 'active' AND a.trade_type = 'A1'
@@ -1850,8 +1891,128 @@ async function handleRegionalTopDivisions(req, res) {
       AND a.first_seen_at >= NOW() - INTERVAL '7 days'
       AND c.city = $1
       ${ptFilter}
-    GROUP BY c.division
+    GROUP BY ${MERGED_DIVISION}
     ORDER BY bargain_count DESC
   `, params);
   res.json(rows);
+}
+
+// ════════════════════════════════════════
+// Watchlist (server-based)
+// ════════════════════════════════════════
+
+async function handleGetWatchlist(req, res) {
+  const pool = getPool();
+  const user = extractUser(req);
+  if (!user) return res.json([]);
+
+  const { rows } = await pool.query(`
+    SELECT w.id, w.complex_id, w.pyeong_type, w.property_type, w.created_at,
+      c.complex_name,
+      c.property_type AS complex_property_type,
+      count(a.id) FILTER (WHERE a.article_status = 'active')::int AS total_articles,
+      count(a.id) FILTER (WHERE a.article_status = 'active' AND a.is_bargain = true)::int AS bargain_count,
+      count(a.id) FILTER (WHERE a.article_status = 'active' AND a.first_seen_at >= CURRENT_DATE)::int AS new_today,
+      CASE WHEN count(a.id) FILTER (WHERE a.article_status = 'active' AND a.trade_type = 'A1') > 0
+        THEN avg(a.deal_price) FILTER (WHERE a.article_status = 'active' AND a.trade_type = 'A1')
+        ELSE NULL END AS avg_price,
+      CASE WHEN count(a.id) FILTER (WHERE a.article_status = 'active' AND a.trade_type = 'A1') > 0
+        THEN min(a.deal_price) FILTER (WHERE a.article_status = 'active' AND a.trade_type = 'A1')
+        ELSE NULL END AS min_price
+    FROM watchlist w
+    JOIN complexes c ON c.id = w.complex_id
+    LEFT JOIN articles a ON a.complex_id = w.complex_id
+      AND (w.pyeong_type IS NULL OR a.space_name = w.pyeong_type)
+    WHERE w.user_id = $1
+    GROUP BY w.id, w.complex_id, w.pyeong_type, w.property_type, w.created_at,
+      c.complex_name, c.property_type
+    ORDER BY w.created_at DESC
+  `, [user.userId]);
+  res.json(rows);
+}
+
+async function handleAddWatchlist(req, res) {
+  const pool = getPool();
+  const user = extractUser(req);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+  const { complex_id, pyeong_type, property_type } = req.body;
+  if (!complex_id) return res.status(400).json({ error: 'complex_id required' });
+
+  try {
+    const { rows } = await pool.query(`
+      INSERT INTO watchlist (user_id, complex_id, pyeong_type, property_type)
+      VALUES ($1, $2, $3, $4)
+      ON CONFLICT (user_id, complex_id, COALESCE(pyeong_type, '__ALL__')) DO NOTHING
+      RETURNING *
+    `, [user.userId, complex_id, pyeong_type || null, property_type || 'all']);
+
+    if (rows.length === 0) {
+      return res.status(409).json({ error: 'Already exists' });
+    }
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+async function handleDeleteWatchlist(req, res) {
+  const pool = getPool();
+  const user = extractUser(req);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+  const { rowCount } = await pool.query(
+    `DELETE FROM watchlist WHERE id = $1 AND user_id = $2`,
+    [req.params.id, user.userId]
+  );
+  if (rowCount === 0) return res.status(404).json({ error: 'Not found' });
+  res.json({ ok: true });
+}
+
+// ════════════════════════════════════════
+// Notification Settings
+// ════════════════════════════════════════
+
+async function handleGetNotificationSettings(req, res) {
+  const pool = getPool();
+  const user = extractUser(req);
+  if (!user) return res.json({ notify_keyword_bargain: true, notify_price_bargain: true, notify_new_article: true });
+
+  const { rows } = await pool.query(
+    `SELECT * FROM notification_settings WHERE user_id = $1`,
+    [user.userId]
+  );
+  if (rows.length === 0) {
+    return res.json({
+      notify_keyword_bargain: true,
+      notify_price_bargain: true,
+      notify_new_article: true,
+    });
+  }
+  res.json(rows[0]);
+}
+
+async function handlePutNotificationSettings(req, res) {
+  const pool = getPool();
+  const user = extractUser(req);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+  const { notify_keyword_bargain, notify_price_bargain, notify_new_article } = req.body;
+
+  const { rows } = await pool.query(`
+    INSERT INTO notification_settings (user_id, notify_keyword_bargain, notify_price_bargain, notify_new_article)
+    VALUES ($1, $2, $3, $4)
+    ON CONFLICT (user_id) DO UPDATE SET
+      notify_keyword_bargain = EXCLUDED.notify_keyword_bargain,
+      notify_price_bargain = EXCLUDED.notify_price_bargain,
+      notify_new_article = EXCLUDED.notify_new_article,
+      updated_at = NOW()
+    RETURNING *
+  `, [
+    user.userId,
+    notify_keyword_bargain ?? true,
+    notify_price_bargain ?? true,
+    notify_new_article ?? true,
+  ]);
+  res.json(rows[0]);
 }

@@ -1,10 +1,44 @@
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useSettings } from '../hooks/useSettings';
+import { apiFetch, apiPut } from '../lib/api';
 import ToggleRow from '../components/ToggleRow';
+import LoadingSpinner from '../components/LoadingSpinner';
+import type { NotificationSettings } from '../types';
+
+const DEFAULTS: NotificationSettings = {
+  notify_keyword_bargain: true,
+  notify_price_bargain: true,
+  notify_new_article: true,
+};
 
 export default function NotificationSettingsPage() {
   const nav = useNavigate();
-  const { settings, update } = useSettings();
+  const [settings, setSettings] = useState<NotificationSettings>(DEFAULTS);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    apiFetch<NotificationSettings>('/notification-settings')
+      .then(data => setSettings({
+        notify_keyword_bargain: data.notify_keyword_bargain ?? true,
+        notify_price_bargain: data.notify_price_bargain ?? true,
+        notify_new_article: data.notify_new_article ?? true,
+      }))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const toggle = async (key: keyof NotificationSettings, value: boolean) => {
+    const next = { ...settings, [key]: value };
+    setSettings(next);
+    setSaving(true);
+    try {
+      await apiPut('/notification-settings', next);
+    } catch {
+      setSettings(settings); // revert
+    }
+    setSaving(false);
+  };
 
   return (
     <div className="page">
@@ -18,37 +52,40 @@ export default function NotificationSettingsPage() {
           </svg>
         </button>
         <h1>알림 설정</h1>
+        {saving && <span className="text-xs text-gray">저장 중...</span>}
       </div>
       <div className="page-content">
-        <div className="section">
-          <div className="card">
-            <div className="card-body">
-              <ToggleRow
-                label="급매 알림"
-                desc="새 급매물 등록 시 알림"
-                checked={settings.notifyBargain}
-                onChange={v => update({ notifyBargain: v })}
-              />
-              <ToggleRow
-                label="가격 인하 알림"
-                desc="관심 단지 호가 인하 시 알림"
-                checked={settings.notifyPriceDrop}
-                onChange={v => update({ notifyPriceDrop: v })}
-              />
-              <ToggleRow
-                label="관심단지 신규매물"
-                desc="관심 단지 새 매물 등록 시 알림"
-                checked={settings.notifyWatchlist}
-                onChange={v => update({ notifyWatchlist: v })}
-              />
-              <div className="text-xs text-gray" style={{
-                marginTop: 12, padding: '10px 12px', background: 'var(--gray-50)', borderRadius: 8,
-              }}>
-                알림은 토스 앱 연동 후 활성화됩니다
+        {loading ? <LoadingSpinner /> : (
+          <div className="section">
+            <div className="card">
+              <div className="card-body">
+                <ToggleRow
+                  label="키워드 급매 알림"
+                  desc="관심 단지에 키워드 급매 등록 시 알림"
+                  checked={settings.notify_keyword_bargain}
+                  onChange={v => toggle('notify_keyword_bargain', v)}
+                />
+                <ToggleRow
+                  label="가격 급매 알림"
+                  desc="관심 단지에 가격 급매 감지 시 알림"
+                  checked={settings.notify_price_bargain}
+                  onChange={v => toggle('notify_price_bargain', v)}
+                />
+                <ToggleRow
+                  label="관심단지 신규매물"
+                  desc="관심 단지 새 매물 등록 시 알림"
+                  checked={settings.notify_new_article}
+                  onChange={v => toggle('notify_new_article', v)}
+                />
+                <div className="text-xs text-gray" style={{
+                  marginTop: 12, padding: '10px 12px', background: 'var(--gray-50)', borderRadius: 8,
+                }}>
+                  알림은 토스 앱 연동 후 활성화됩니다
+                </div>
               </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

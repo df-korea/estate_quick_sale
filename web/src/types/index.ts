@@ -253,7 +253,23 @@ export interface TopPriceDropItem {
   drop_count: number;
 }
 
-/* ── Watchlist ── */
+/* ── Watchlist (server-based) ── */
+export interface WatchlistItem {
+  id: number;
+  complex_id: number;
+  complex_name: string;
+  complex_property_type: string | null;
+  property_type: string;
+  pyeong_type: string | null;
+  total_articles: number;
+  bargain_count: number;
+  new_today: number;
+  avg_price: number | null;
+  min_price: number | null;
+  created_at: string;
+}
+
+/** @deprecated Use WatchlistItem instead */
 export interface WatchlistComplex {
   complex_id: number;
   complex_name: string;
@@ -262,6 +278,13 @@ export interface WatchlistComplex {
   new_today: number;
   avg_price: number | null;
   min_price: number | null;
+}
+
+/* ── Notification Settings ── */
+export interface NotificationSettings {
+  notify_keyword_bargain: boolean;
+  notify_price_bargain: boolean;
+  notify_new_article: boolean;
 }
 
 /* ── Stats ── */

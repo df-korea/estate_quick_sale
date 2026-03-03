@@ -40,6 +40,8 @@ export const viewport: Viewport = {
   themeColor: '#3182f6',
 };
 
+const gaId = process.env.NEXT_PUBLIC_GA_ID;
+
 export default function RootLayout({
   children,
 }: {
@@ -53,6 +55,22 @@ export default function RootLayout({
           crossOrigin="anonymous"
           strategy="beforeInteractive"
         />
+        {gaId && (
+          <>
+            <Script
+              src={`https://www.googletagmanager.com/gtag/js?id=${gaId}`}
+              strategy="afterInteractive"
+            />
+            <Script id="google-analytics" strategy="afterInteractive">
+              {`
+                window.dataLayer = window.dataLayer || [];
+                function gtag(){dataLayer.push(arguments);}
+                gtag('js', new Date());
+                gtag('config', '${gaId}');
+              `}
+            </Script>
+          </>
+        )}
       </head>
       <body>
         <AuthProvider>

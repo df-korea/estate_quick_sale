@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import { feature } from 'topojson-client';
 import { geoMercator, geoPath, geoCentroid } from 'd3-geo';
 import type { Topology, GeometryCollection } from 'topojson-specification';
+import type { Feature, Geometry } from 'geojson';
 import type { SigunguHeatmapItem } from '../../types';
 
 interface SggProps { name: string; code: string; name_eng: string; base_year: string }
@@ -22,6 +23,9 @@ const DB_TO_TOPO_CODE: Record<string, string> = {
   '전북도': '35', '전라남도': '36', '경상북도': '37', '경상남도': '38',
   '제주도': '39',
 };
+
+/** 도(province) 코드 — 구를 시 단위로 통합하는 대상 */
+const PROVINCE_CODES = new Set(['31','32','33','34','35','36','37','38','39']);
 
 /** 시도별 지도 중심점/스케일 (TopoJSON geoBounds 기반 사전 계산) */
 const SIDO_VIEW: Record<string, { center: [number, number]; scale: number }> = {
@@ -53,6 +57,13 @@ function bubbleRadius(count: number): number {
   return Math.min(16, 8 + Math.log10(count + 1) * 2.5);
 }
 
+/** TopoJSON 이름에서 부모 시 추출: "수원시영통구" → "수원시" (도 소속만) */
+function extractDisplayName(topoName: string, isProvince: boolean): string {
+  if (!isProvince) return topoName;
+  const m = topoName.match(/^(.+시).+구$/);
+  return m ? m[1] : topoName;
+}
+
 interface Props {
   sidoName: string;
   heatmap: SigunguHeatmapItem[];
@@ -64,6 +75,7 @@ export default function SigunguMap({ sidoName, heatmap, onSelect }: Props) {
   const inv = 1 / scale;
   const sidoCode = DB_TO_TOPO_CODE[sidoName];
   const view = sidoCode ? SIDO_VIEW[sidoCode] : null;
+  const isProvince = PROVINCE_CODES.has(sidoCode ?? '');
 
   const dataMap = useMemo(() => {
     const m = new Map<string, SigunguHeatmapItem>();
@@ -75,6 +87,17 @@ export default function SigunguMap({ sidoName, heatmap, onSelect }: Props) {
     () => sidoCode ? allFeatures.filter(f => (f.properties!.code).startsWith(sidoCode)) : [],
     [sidoCode]
   );
+
+  /** 그룹별 피처 (부모 시 단위) — 버블 중복 제거용 */
+  const bubbleGroups = useMemo(() => {
+    const groups = new Map<string, Feature<Geometry, SggProps>[]>();
+    for (const feat of filtered) {
+      const displayName = extractDisplayName(feat.properties!.name, isProvince);
+      if (!groups.has(displayName)) groups.set(displayName, []);
+      groups.get(displayName)!.push(feat);
+    }
+    return groups;
+  }, [filtered, isProvince]);
 
   const { proj, path } = useMemo(() => {
     if (!view) return { proj: null, path: null };
@@ -99,10 +122,10 @@ export default function SigunguMap({ sidoName, heatmap, onSelect }: Props) {
       onTouchEnd={onTouchEnd}
       onWheel={onWheel}
     >
-      {/* 시군구 지역 색칠 */}
+      {/* 시군구 지역 색칠 — 같은 부모 시는 동일 색상 */}
       {filtered.map((feat, i) => {
-        const name = feat.properties!.name;
-        const item = dataMap.get(name);
+        const displayName = extractDisplayName(feat.properties!.name, isProvince);
+        const item = dataMap.get(displayName);
         const fill = bargainRatioColor(item?.bargain_ratio ?? 0);
         const d = path(feat);
         if (!d) return null;
@@ -114,35 +137,37 @@ export default function SigunguMap({ sidoName, heatmap, onSelect }: Props) {
             fill={fill}
             stroke="#fff"
             strokeWidth={0.3}
-            onClick={() => onSelect(name)}
+            onClick={() => onSelect(displayName)}
             style={{ cursor: 'pointer' }}
           />
         );
       })}
 
-      {/* 버블 마커 */}
+      {/* 버블 마커 — 부모 시 당 1개 (하위 피처 평균 centroid) */}
       <g pointerEvents="none">
-        {filtered.map((feat, i) => {
-          const name = feat.properties!.name;
-          const item = dataMap.get(name);
+        {Array.from(bubbleGroups.entries()).map(([displayName, features]) => {
+          const item = dataMap.get(displayName);
           const count = item?.bargain_count ?? 0;
           const r = bubbleRadius(count) * inv;
           const color = bargainRatioColor(item?.bargain_ratio ?? 0);
 
-          const centroid = geoCentroid(feat);
-          const projected = proj(centroid);
+          // 하위 피처들의 평균 centroid
+          const centroids = features.map(f => geoCentroid(f));
+          const avgLon = centroids.reduce((s, c) => s + c[0], 0) / centroids.length;
+          const avgLat = centroids.reduce((s, c) => s + c[1], 0) / centroids.length;
+          const projected = proj([avgLon, avgLat]);
           if (!projected) return null;
           const [cx, cy] = projected;
 
           return (
-            <g key={`m-${i}`} onClick={() => onSelect(name)} style={{ cursor: 'pointer' }} pointerEvents="auto">
+            <g key={`m-${displayName}`} onClick={() => onSelect(displayName)} style={{ cursor: 'pointer' }} pointerEvents="auto">
               <circle cx={cx} cy={cy} r={r} fill="white" stroke={color} strokeWidth={1.5 * inv} />
               <text
                 x={cx} y={cy - r - 2 * inv}
                 textAnchor="middle"
                 style={{ fontSize: baseFontSize * inv, fontWeight: 800, fill: '#333' }}
               >
-                {name}
+                {displayName}
               </text>
               {count > 0 && (
                 <text
