@@ -51,19 +51,19 @@ export function useRecentPriceChanges(limit = 10) {
   return { data, loading };
 }
 
-export function useTopPriceDrops(limit = 10, initialData?: TopPriceDropItem[]) {
+export function useTopPriceDrops(limit = 10, sort = 'amount', initialData?: TopPriceDropItem[]) {
   const [data, setData] = useState<TopPriceDropItem[]>(initialData || []);
   const [loading, setLoading] = useState(!initialData);
-  const skipFirst = useRef(!!initialData);
+  const skipFirst = useRef(!!initialData && sort === 'amount');
 
   useEffect(() => {
     if (skipFirst.current) { skipFirst.current = false; return; }
     setLoading(true);
-    apiFetch<TopPriceDropItem[]>(`/analysis/top-price-drops?limit=${limit}`)
+    apiFetch<TopPriceDropItem[]>(`/analysis/top-price-drops?limit=${limit}&sort=${sort}`)
       .then(setData)
       .catch(() => setData([]))
       .finally(() => setLoading(false));
-  }, [limit]);
+  }, [limit, sort]);
 
   return { data, loading };
 }

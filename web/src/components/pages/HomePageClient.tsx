@@ -33,7 +33,8 @@ export default function HomePage({ initialBriefing, initialLeaderboard, initialT
 
   const { data: briefing } = useBriefing(initialBriefing);
   const { data: leaderboard } = useLeaderboard(10, leaderboardMode, initialLeaderboard);
-  const { data: topPriceDrops } = useTopPriceDrops(10, initialTopPriceDrops);
+  const [dropSort, setDropSort] = useState<string>('amount');
+  const { data: topPriceDrops } = useTopPriceDrops(10, dropSort, initialTopPriceDrops);
   const [dongRankingMode, setDongRankingMode] = useState<BargainMode>('keyword');
   const { data: dongRankings, loading: dongLoading } = useDongRankings(10, dongRankingMode, initialDongRankings);
 
@@ -73,11 +74,33 @@ export default function HomePage({ initialBriefing, initialLeaderboard, initialT
     weeklyBargains.forEach(item => router.prefetch(`/article/${item.id}`));
   }, [weeklyBargains, router]);
 
-  const handleDrillChange = useCallback((_level: DrillLevel, _sido: string | null, _sigungu: string | null) => {
+  const [mapAdKey, setMapAdKey] = useState(0);
+
+  const handleDrillChange = useCallback((level: DrillLevel, sido: string | null, sigungu: string | null) => {
+    setMapAdKey(k => k + 1);
+
+    // Update URL so GA4 tracks each drill level/region separately
+    const params = new URLSearchParams();
+    if (sido) params.set('sido', sido);
+    if (sigungu) params.set('sigungu', sigungu);
+    const qs = params.toString();
+    const newPath = qs ? `/?${qs}` : '/';
+    window.history.replaceState(null, '', newPath);
+
+    // Send GA virtual pageview
+    const g = (window as any).gtag;
+    if (g) {
+      g('event', 'page_view', {
+        page_path: newPath,
+        page_title: sigungu ? `${sido} ${sigungu}` : sido || '전국',
+      });
+    }
   }, []);
 
   const handleBargainModeChange = useCallback((mode: BargainMode) => {
     setBargainMode(mode);
+    const g = (window as any).gtag;
+    if (g) g('event', 'filter_change', { filter_type: 'bargain_mode', filter_value: mode });
   }, []);
 
   const summary = briefing?.summary;
@@ -109,6 +132,9 @@ export default function HomePage({ initialBriefing, initialLeaderboard, initialT
             <MapExplorer onDrillChange={handleDrillChange} onBargainModeChange={handleBargainModeChange} />
           </Suspense>
         </section>
+
+        {/* Ad below map — remounts on every drill change */}
+        <InlineBannerAd key={`map-${mapAdKey}`} />
 
         {/* Weekly Featured Bargains */}
         <section className="section animate-fade-in-up stagger-2">
@@ -181,9 +207,16 @@ export default function HomePage({ initialBriefing, initialLeaderboard, initialT
                   <div style={{ borderTop: '1px solid var(--border)', paddingTop: 6 }}>
                     {/* Price + Score */}
                     <div className="flex items-center justify-between" style={{ marginBottom: 2 }}>
-                      <span style={{ fontWeight: 700, fontSize: 15, color: 'var(--blue-600)' }}>
-                        {item.formatted_price || formatWon(item.deal_price)}
-                      </span>
+                      <div>
+                        {item.last_tx_price && (
+                          <span style={{ fontSize: 12, color: 'var(--gray-500)', textDecoration: 'line-through' }}>
+                            {formatWon(item.last_tx_price)}
+                          </span>
+                        )}
+                        <span style={{ fontWeight: 700, fontSize: 15, color: 'var(--blue-600)', marginLeft: item.last_tx_price ? 4 : 0 }}>
+                          {item.formatted_price || formatWon(item.deal_price)}
+                        </span>
+                      </div>
                       <ScoreBreakdownPopover articleId={item.id} bargainScore={item.bargain_score}>
                         <span style={{
                           background: 'var(--orange-50)',
@@ -249,9 +282,6 @@ export default function HomePage({ initialBriefing, initialLeaderboard, initialT
           </section>
         )}
 
-        {/* Ad: between leaderboard and dong rankings */}
-        <InlineBannerAd />
-
         {/* Dong Rankings */}
         {dongRankings.length > 0 && (
           <section className="section animate-fade-in-up stagger-3">
@@ -278,6 +308,18 @@ export default function HomePage({ initialBriefing, initialLeaderboard, initialT
         {topPriceDrops.length > 0 && (
           <section className="section animate-fade-in-up stagger-4">
             <SectionHeader title="누적 가격인하 TOP 10" />
+            <div className="flex gap-6" style={{ marginBottom: 'var(--space-8)' }}>
+              {[
+                { value: 'amount', label: '가격' },
+                { value: 'rate', label: '인하율' },
+              ].map(m => (
+                <button key={m.value}
+                  className={`chip ${dropSort === m.value ? 'chip--active' : ''}`}
+                  onClick={() => setDropSort(m.value)}
+                  style={{ fontSize: 'var(--text-sm)' }}
+                >{m.label}</button>
+              ))}
+            </div>
             <div className="card">
               <div className="card-body" style={{ padding: 0 }}>
                 {topPriceDrops.map((item, i) => (
@@ -288,8 +330,6 @@ export default function HomePage({ initialBriefing, initialLeaderboard, initialT
           </section>
         )}
 
-        {/* Ad: after price drops */}
-        <InlineBannerAd unit="DAN-A6VYnFhKoJNfuhHV" />
       </div>
     </div>
   );

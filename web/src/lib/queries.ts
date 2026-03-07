@@ -175,7 +175,7 @@ export async function getLeaderboard(limit = 10, bargainType = 'all') {
   return rows;
 }
 
-export async function getTopPriceDrops(limit = 10) {
+export async function getTopPriceDrops(limit = 10, sort: 'amount' | 'rate' = 'amount') {
   const pool = getPool();
   const { rows } = await pool.query(`
     WITH first_last AS (
@@ -216,7 +216,7 @@ export async function getTopPriceDrops(limit = 10) {
       bargain_score, bargain_keyword,
       initial_price, current_price, drop_amount, drop_pct, drop_count
     FROM drops
-    ORDER BY drop_amount DESC
+    ORDER BY ${sort === 'rate' ? 'drop_pct' : 'drop_amount'} DESC
     LIMIT $1
   `, [limit]);
   return rows;

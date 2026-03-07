@@ -1236,7 +1236,8 @@ async function handleRecentPriceChanges(req, res) {
 
 async function handleTopPriceDrops(req, res) {
   const limit = Math.min(parseInt(req.query.limit) || 10, 50);
-  const data = await cached(`analysis:top-drops:${limit}`, 300_000, async () => {
+  const sort = req.query.sort === 'rate' ? 'rate' : 'amount';
+  const data = await cached(`analysis:top-drops:${sort}:${limit}`, 300_000, async () => {
     const pool = getPool();
     const { rows } = await pool.query(`
       WITH first_last AS (
@@ -1277,7 +1278,7 @@ async function handleTopPriceDrops(req, res) {
         bargain_score, bargain_keyword,
         initial_price, current_price, drop_amount, drop_pct, drop_count
       FROM drops
-      ORDER BY drop_amount DESC
+      ORDER BY ${sort === 'rate' ? 'drop_pct' : 'drop_amount'} DESC
       LIMIT $1
     `, [limit]);
     return rows;
@@ -1890,7 +1891,15 @@ async function handleWeeklyFeaturedBargains(req, res) {
       SELECT id, deal_price, formatted_price, exclusive_space, supply_space,
         target_floor, total_floor, bargain_score, bargain_keyword,
         dong_name, direction, description, space_name, bargain_type, first_seen_at,
-        complex_name, complex_id, total_households, division
+        complex_name, complex_id, total_households, division,
+        (SELECT rt.deal_amount * 10000
+         FROM real_transactions rt
+         WHERE rt.complex_id = ranked.complex_id
+           AND rt.exclu_use_ar BETWEEN ranked.exclusive_space - 1 AND ranked.exclusive_space + 1
+           AND (rt.cdeal_type IS NULL OR rt.cdeal_type = '' OR rt.cdeal_type != 'O')
+         ORDER BY rt.deal_year DESC, rt.deal_month DESC, rt.deal_day DESC NULLS LAST
+         LIMIT 1
+        ) AS last_tx_price
       FROM ranked WHERE rn = 1
       ORDER BY bargain_score DESC
       LIMIT 10

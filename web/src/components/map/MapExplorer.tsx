@@ -7,6 +7,7 @@ import SidoMap from './SidoMap';
 import SigunguMap from './SigunguMap';
 import KakaoComplexMap from './KakaoComplexMap';
 import ComplexList from './ComplexList';
+import InlineBannerAd from '../InlineBannerAd';
 import MapLegend from './MapLegend';
 import Breadcrumb from '../Breadcrumb';
 import LoadingSpinner from '../LoadingSpinner';
@@ -218,6 +219,7 @@ export default function MapExplorer({ onDrillChange, onBargainModeChange }: Prop
           {complexLoading ? <LoadingSpinner /> : (
             <>
               <KakaoComplexMap complexes={complexes} sigunguName={selectedSigungu ?? ''} bargainMode={bargainMode} />
+              <InlineBannerAd />
               <div style={{ marginTop: 12 }}>
                 <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>
                   {bargainMode === 'keyword'

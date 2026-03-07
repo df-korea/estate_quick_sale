@@ -1,41 +1,23 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 
 const DEFAULT_UNIT = 'DAN-z6BuxRIuldWmIPEA';
+const SCRIPT_SRC = 'https://t1.daumcdn.net/kas/static/ba.min.js';
 
-let scriptPromise: Promise<void> | null = null;
-
-function ensureScript(): Promise<void> {
-  if (scriptPromise) return scriptPromise;
-  scriptPromise = new Promise((resolve) => {
-    if ((window as any).adfit) {
-      resolve();
-      return;
-    }
-    const script = document.createElement('script');
-    script.src = 'https://t1.daumcdn.net/kas/static/ba.min.js';
-    script.async = true;
-    script.onload = () => resolve();
-    document.head.appendChild(script);
-  });
-  return scriptPromise;
+/** SDK가 초기화 완료된 객체인지 (배열 큐가 아닌지) 확인 */
+function isAdfitReady(): boolean {
+  const af = (window as any).adfit;
+  return af && typeof af.display === 'function';
 }
-
-let adCounter = 0;
 
 export default function InlineBannerAd({ unit = DEFAULT_UNIT }: { unit?: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [mounted, setMounted] = useState(false);
-  const [mountKey] = useState(() => ++adCounter);
-
-  useEffect(() => { setMounted(true); }, []);
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
-    // Create fresh <ins> element each mount so adfit.render() always picks it up
     const ins = document.createElement('ins');
     ins.className = 'kakao_ad_area';
     ins.style.display = 'none';
@@ -44,27 +26,23 @@ export default function InlineBannerAd({ unit = DEFAULT_UNIT }: { unit?: string 
     ins.setAttribute('data-ad-height', '100');
     container.appendChild(ins);
 
-    let cancelled = false;
-
-    ensureScript().then(() => {
-      if (cancelled) return;
-      requestAnimationFrame(() => {
-        if (cancelled) return;
-        const adfit = (window as any).adfit;
-        if (adfit) adfit.render();
-      });
-    });
+    const w = window as any;
+    if (isAdfitReady()) {
+      // SDK 이미 로드됨 → 이전 유닛 정리 후 즉시 재렌더 (같은 프레임)
+      try { w.adfit.destroy(unit); } catch (_) {}
+      w.adfit.display(unit);
+    } else {
+      // 최초 로드 → ba.min.js가 모든 ins.kakao_ad_area를 자동 스캔·처리
+      const script = document.createElement('script');
+      script.src = SCRIPT_SRC;
+      script.async = true;
+      container.appendChild(script);
+    }
 
     return () => {
-      cancelled = true;
-      const af = (window as any).adfit;
-      if (af) af.destroy(unit);
-      // Remove the <ins> so next mount creates a fresh one
-      if (container.contains(ins)) container.removeChild(ins);
+      container.innerHTML = '';
     };
-  }, [unit, mountKey]);
-
-  if (!mounted) return null;
+  }, [unit]);
 
   return (
     <div

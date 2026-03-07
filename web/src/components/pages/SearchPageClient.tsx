@@ -13,9 +13,11 @@ import LoadingSpinner from '@/components/LoadingSpinner';
 import EmptyState from '@/components/EmptyState';
 import RegionalBargainRow from '@/components/RegionalBargainRow';
 import DualRangeSlider from '@/components/DualRangeSlider';
+import InlineBannerAd from '@/components/InlineBannerAd';
 
 export default function SearchPage() {
   const [query, setQuery] = useState('');
+  const [inputFocused, setInputFocused] = useState(false);
   const { results, loading } = useComplexSearch(query);
   const { data: popularComplexes, loading: popularLoading } = usePopularComplexes();
   const { data: watchlistData, loading: watchlistLoading } = useWatchlist();
@@ -109,6 +111,8 @@ export default function SearchPage() {
             type="text"
             value={query}
             onChange={e => setQuery(e.target.value)}
+            onFocus={() => setInputFocused(true)}
+            onBlur={() => setTimeout(() => setInputFocused(false), 150)}
             placeholder="단지명을 검색하세요"
             style={{
               width: '100%',
@@ -135,6 +139,23 @@ export default function SearchPage() {
           )}
         </div>
 
+        {/* Focused overlay: 입력 포커스 + 빈 쿼리 → 깨끗한 화면 + 광고 */}
+        {inputFocused && query.length === 0 && (
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 'var(--space-24) 0',
+            minHeight: 200,
+          }}>
+            <div style={{ color: 'var(--gray-400)', fontSize: 14, marginBottom: 'var(--space-16)' }}>
+              관심있는 단지명을 입력하세요
+            </div>
+            <InlineBannerAd />
+          </div>
+        )}
+
         {/* Results */}
         {loading && <LoadingSpinner />}
 
@@ -147,28 +168,31 @@ export default function SearchPage() {
             <div className="text-sm text-gray" style={{ marginBottom: 'var(--space-8)' }}>
               {results.length}개 단지
             </div>
-            {results.map(c => (
-              <div key={c.id}
-                className="flex items-center justify-between"
-                style={{ padding: 'var(--space-12) 0', borderBottom: '1px solid var(--border)', cursor: 'pointer' }}
-                onClick={() => nav.push(`/complex/${c.id}`)}>
-                <div>
-                  <div style={{ fontWeight: 600 }}>{c.complex_name}</div>
-                  <div className="text-sm text-gray">
-                    {c.property_type && `${c.property_type} · `}
-                    {c.total_households && `${c.total_households}세대`}
+            {results.map((c, i) => (
+              <div key={c.id}>
+                <div
+                  className="flex items-center justify-between"
+                  style={{ padding: 'var(--space-12) 0', borderBottom: '1px solid var(--border)', cursor: 'pointer' }}
+                  onClick={() => nav.push(`/complex/${c.id}`)}>
+                  <div>
+                    <div style={{ fontWeight: 600 }}>{c.complex_name}</div>
+                    <div className="text-sm text-gray">
+                      {c.property_type && `${c.property_type} · `}
+                      {c.total_households && `${c.total_households}세대`}
+                    </div>
+                  </div>
+                  <div className="text-sm text-gray" style={{ flexShrink: 0, textAlign: 'right' }}>
+                    {c.deal_count > 0 && <span>매매 {c.deal_count}</span>}
+                    {c.lease_count > 0 && <span style={{ marginLeft: 6 }}>전세 {c.lease_count}</span>}
                   </div>
                 </div>
-                <div className="text-sm text-gray" style={{ flexShrink: 0, textAlign: 'right' }}>
-                  {c.deal_count > 0 && <span>매매 {c.deal_count}</span>}
-                  {c.lease_count > 0 && <span style={{ marginLeft: 6 }}>전세 {c.lease_count}</span>}
-                </div>
+                {(i === 2 || (results.length <= 2 && i === results.length - 1)) && <InlineBannerAd />}
               </div>
             ))}
           </div>
         )}
 
-        {!loading && query.length === 0 && (
+        {!loading && query.length === 0 && !inputFocused && (
           <div>
             {/* 나의 관심 단지 */}
             {!watchlistLoading && watchlistData.length > 0 && (
@@ -461,6 +485,7 @@ export default function SearchPage() {
             )}
           </div>
         )}
+
       </div>
     </div>
   );

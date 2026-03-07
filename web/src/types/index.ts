@@ -447,6 +447,7 @@ export interface WeeklyFeaturedItem {
   complex_id: number;
   total_households: number | null;
   division: string | null;
+  last_tx_price: number | null;
 }
 
 /* ── Dong Rankings ── */
