@@ -1,14 +1,16 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { apiFetch } from '../lib/api';
 import type { DongRankingItem, DongArticle } from '../types';
 
-export function useDongRankings(limit = 10, bargainType = 'all') {
-  const [data, setData] = useState<DongRankingItem[]>([]);
-  const [loading, setLoading] = useState(true);
+export function useDongRankings(limit = 10, bargainType = 'all', initialData?: DongRankingItem[]) {
+  const [data, setData] = useState<DongRankingItem[]>(initialData || []);
+  const [loading, setLoading] = useState(!initialData);
+  const skipFirst = useRef(!!initialData && bargainType === 'keyword');
 
   useEffect(() => {
+    if (skipFirst.current) { skipFirst.current = false; return; }
     setLoading(true);
     apiFetch<DongRankingItem[]>(`/analysis/regional-dong-rankings?limit=${limit}&bargainType=${bargainType}`)
       .then(setData)

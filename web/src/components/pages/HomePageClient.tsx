@@ -1,66 +1,77 @@
 'use client';
 
-import { useState, useCallback, lazy, Suspense } from 'react';
+import { useState, useCallback, useMemo, useRef, useEffect, lazy, Suspense } from 'react';
 import { useRouter } from 'next/navigation';
-import type { DrillLevel, BargainMode, DongRankingItem, PropertyType } from '@/types';
+import type { DrillLevel, BargainMode, Briefing, DongRankingItem, LeaderboardItem, TopPriceDropItem } from '@/types';
 import { useBriefing } from '@/hooks/useBriefing';
-import { useRegionalTopBargains, useRegionalTopDivisions } from '@/hooks/useBargains';
+import { useWeeklyFeaturedBargains } from '@/hooks/useBargains';
 import { useLeaderboard, useTopPriceDrops } from '@/hooks/useAnalysis';
 import { useDongRankings, useDongArticles } from '@/hooks/useDongRankings';
 import { useSidoHeatmap } from '@/hooks/useMapData';
-import { formatWon, formatArea, abbreviateCity } from '@/utils/format';
+import { formatWon, formatAreaFull, formatArea, abbreviateCity, relativeDate } from '@/utils/format';
+import { useDragScroll } from '@/hooks/useDragScroll';
 const MapExplorer = lazy(() => import('@/components/map/MapExplorer'));
 import SectionHeader from '@/components/SectionHeader';
 import LeaderboardRow from '@/components/LeaderboardRow';
 import TopPriceDropRow from '@/components/TopPriceDropRow';
 import LoadingSpinner from '@/components/LoadingSpinner';
 import ScoreBreakdownPopover from '@/components/ScoreBreakdownPopover';
+import BargainBadge from '@/components/BargainBadge';
 import InlineBannerAd from '@/components/InlineBannerAd';
 
-const PRICE_OPTIONS = [
-  { value: 50000000, label: '5천만' },
-  { value: 100000000, label: '1억' },
-  { value: 200000000, label: '2억' },
-  { value: 300000000, label: '3억' },
-  { value: 500000000, label: '5억' },
-  { value: 700000000, label: '7억' },
-  { value: 1000000000, label: '10억' },
-  { value: 1500000000, label: '15억' },
-  { value: 2000000000, label: '20억' },
-  { value: 3000000000, label: '30억' },
-  { value: 5000000000, label: '50억' },
-];
+interface HomePageProps {
+  initialBriefing?: Briefing | null;
+  initialLeaderboard?: LeaderboardItem[];
+  initialTopPriceDrops?: TopPriceDropItem[];
+  initialDongRankings?: DongRankingItem[];
+}
 
-export default function HomePage() {
+export default function HomePage({ initialBriefing, initialLeaderboard, initialTopPriceDrops, initialDongRankings }: HomePageProps = {}) {
+  const router = useRouter();
   const [bargainMode, setBargainMode] = useState<BargainMode>('all');
   const [leaderboardMode, setLeaderboardMode] = useState<string>('all');
 
-  const { data: briefing } = useBriefing();
-  const { data: leaderboard } = useLeaderboard(10, leaderboardMode);
-  const { data: topPriceDrops } = useTopPriceDrops(10);
+  const { data: briefing } = useBriefing(initialBriefing);
+  const { data: leaderboard } = useLeaderboard(10, leaderboardMode, initialLeaderboard);
+  const { data: topPriceDrops } = useTopPriceDrops(10, initialTopPriceDrops);
   const [dongRankingMode, setDongRankingMode] = useState<BargainMode>('keyword');
-  const { data: dongRankings, loading: dongLoading } = useDongRankings(10, dongRankingMode);
+  const { data: dongRankings, loading: dongLoading } = useDongRankings(10, dongRankingMode, initialDongRankings);
 
-  // Regional TOP 10
+  // Sido list for weekly featured
   const { data: sidoHeatmap } = useSidoHeatmap();
-  const sidoList = [...sidoHeatmap.map(s => s.sido_name).filter(Boolean)].sort((a, b) => {
-    const aa = abbreviateCity(a), bb = abbreviateCity(b);
-    if (aa === '서울') return -1;
-    if (bb === '서울') return 1;
-    if (aa === '경기') return -1;
-    if (bb === '경기') return 1;
-    return aa.localeCompare(bb, 'ko');
-  });
-  const [selectedSido, setSelectedSido] = useState<string | null>(null);
-  const [selectedSigungu, setSelectedSigungu] = useState<string | null>(null);
-  const [regionalPropertyType, setRegionalPropertyType] = useState<PropertyType>('all');
-  const [priceMin, setPriceMin] = useState<number | null>(null);
-  const [priceMax, setPriceMax] = useState<number | null>(null);
-  const [showPriceFilter, setShowPriceFilter] = useState(false);
-  const activeSido = selectedSido || sidoList[0] || null;
-  const { data: divisionsRaw } = useRegionalTopDivisions(activeSido, regionalPropertyType);
-  const divisions = [...divisionsRaw].sort((a, b) => a.division.localeCompare(b.division, 'ko'));
-  const { data: regionalBargains, loading: regionalLoading } = useRegionalTopBargains(activeSido, selectedSigungu, 10, regionalPropertyType, priceMin, priceMax);
+  const sidoList = useMemo(() =>
+    [...sidoHeatmap.map(s => s.sido_name).filter(Boolean)].sort((a, b) => {
+      const aa = abbreviateCity(a), bb = abbreviateCity(b);
+      if (aa === '서울') return -1;
+      if (bb === '서울') return 1;
+      if (aa === '경기') return -1;
+      if (bb === '경기') return 1;
+      return aa.localeCompare(bb, 'ko');
+    }),
+    [sidoHeatmap]
+  );
+
+  // Weekly featured bargains
+  const [weeklySido, setWeeklySido] = useState<string | null>(null);
+  const activeSido = weeklySido || sidoList[0] || null;
+  const { data: weeklyBargains, loading: weeklyLoading } = useWeeklyFeaturedBargains(activeSido);
+  const carouselRef = useRef<HTMLDivElement>(null);
+  const { ref: dragCarouselRef } = useDragScroll<HTMLDivElement>();
+  const { ref: dragSidoRef } = useDragScroll<HTMLDivElement>();
+
+  const setCarouselRef = useCallback((node: HTMLDivElement | null) => {
+    carouselRef.current = node;
+    dragCarouselRef.current = node;
+  }, [dragCarouselRef]);
+
+  useEffect(() => {
+    carouselRef.current?.scrollTo({ left: 0, behavior: 'smooth' });
+  }, [activeSido]);
+
+  // Prefetch article pages for carousel items
+  useEffect(() => {
+    weeklyBargains.forEach(item => router.prefetch(`/article/${item.id}`));
+  }, [weeklyBargains, router]);
 
   const handleDrillChange = useCallback((_level: DrillLevel, _sido: string | null, _sigungu: string | null) => {
   }, []);
@@ -99,134 +110,114 @@ export default function HomePage() {
           </Suspense>
         </section>
 
-        {/* Regional TOP 10 */}
+        {/* Weekly Featured Bargains */}
         <section className="section animate-fade-in-up stagger-2">
-          {/* Title row: left = title, right = price button + property type */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-            <h3 style={{ fontWeight: 700, fontSize: 16, margin: 0 }}>최근 가격급매 TOP10</h3>
-            <div className="flex gap-6" style={{ alignItems: 'center' }}>
-              <button
-                onClick={() => setShowPriceFilter(v => !v)}
-                className={`chip ${(priceMin || priceMax) ? 'chip--active' : ''}`}
-                style={{ fontSize: 'var(--text-sm)' }}
-              >
-                {priceMin || priceMax
-                  ? `${priceMin ? formatWon(priceMin) : ''}~${priceMax ? formatWon(priceMax) : ''}`
-                  : '가격'}
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginLeft: 3, transform: showPriceFilter ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}>
-                  <path d="M6 9l6 6 6-6" />
-                </svg>
-              </button>
-              <select
-                value={regionalPropertyType}
-                onChange={e => setRegionalPropertyType(e.target.value as PropertyType)}
-                style={{
-                  background: 'var(--gray-100)',
-                  border: 'none',
-                  borderRadius: 'var(--radius-full)',
-                  padding: '6px 12px',
-                  fontSize: 'var(--text-sm)',
-                  color: 'var(--gray-700)',
-                  cursor: 'pointer',
-                  flexShrink: 0,
-                }}
-              >
-                <option value="all">전체</option>
-                <option value="APT">아파트</option>
-                <option value="OPST">오피스텔</option>
-              </select>
-            </div>
+          <div className="flex items-center gap-8" style={{ margin: '0 0 8px' }}>
+            <h3 style={{ fontWeight: 700, fontSize: 16, margin: 0 }}>이번 주 추천 급매</h3>
+            <span className="text-xs text-gray">최근 7일 기준</span>
           </div>
 
-          {/* Price filter row (collapsible) */}
-          {showPriceFilter && (
-            <div className="flex gap-6" style={{ marginBottom: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <select
-                value={priceMin ?? ''}
-                onChange={e => setPriceMin(e.target.value ? Number(e.target.value) : null)}
-                style={{
-                  background: 'var(--gray-100)', border: 'none', borderRadius: 'var(--radius-full)',
-                  padding: '6px 10px', fontSize: 'var(--text-sm)', color: 'var(--gray-700)', cursor: 'pointer',
-                }}
-              >
-                <option value="">최소가</option>
-                {PRICE_OPTIONS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
-              </select>
-              <span className="text-sm text-gray">~</span>
-              <select
-                value={priceMax ?? ''}
-                onChange={e => setPriceMax(e.target.value ? Number(e.target.value) : null)}
-                style={{
-                  background: 'var(--gray-100)', border: 'none', borderRadius: 'var(--radius-full)',
-                  padding: '6px 10px', fontSize: 'var(--text-sm)', color: 'var(--gray-700)', cursor: 'pointer',
-                }}
-              >
-                <option value="">최대가</option>
-                {PRICE_OPTIONS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
-              </select>
-              {(priceMin || priceMax) && (
+          {/* Sido tabs */}
+          {sidoList.length > 0 && (
+            <div ref={dragSidoRef} className="flex gap-8 scroll-x" style={{ marginBottom: 12 }}>
+              {sidoList.map(s => (
                 <button
-                  onClick={() => { setPriceMin(null); setPriceMax(null); }}
-                  className="text-xs" style={{ color: 'var(--gray-400)', padding: '4px 8px' }}
-                >초기화</button>
-              )}
+                  key={s}
+                  className={`chip ${(activeSido === s) ? 'chip--active' : ''}`}
+                  onClick={() => setWeeklySido(s)}
+                  style={{ fontSize: 'var(--text-sm)', flexShrink: 0 }}
+                >{abbreviateCity(s)}</button>
+              ))}
             </div>
           )}
 
-          {/* Sido + Sigungu selects */}
-          <div className="flex gap-6" style={{ marginBottom: 12 }}>
-            {sidoList.length > 0 && (
-              <select
-                value={activeSido || ''}
-                onChange={e => { setSelectedSido(e.target.value); setSelectedSigungu(null); }}
-                style={{
-                  background: 'var(--gray-100)',
-                  border: 'none',
-                  borderRadius: 'var(--radius-full)',
-                  padding: '6px 12px',
-                  fontSize: 'var(--text-sm)',
-                  color: 'var(--gray-700)',
-                  cursor: 'pointer',
-                }}
-              >
-                {sidoList.map(sido => (
-                  <option key={sido} value={sido}>{abbreviateCity(sido)}</option>
-                ))}
-              </select>
-            )}
-            {divisions.length > 0 && (
-              <select
-                value={selectedSigungu || ''}
-                onChange={e => setSelectedSigungu(e.target.value || null)}
-                style={{
-                  background: 'var(--gray-100)',
-                  border: 'none',
-                  borderRadius: 'var(--radius-full)',
-                  padding: '6px 12px',
-                  fontSize: 'var(--text-sm)',
-                  color: 'var(--gray-700)',
-                  cursor: 'pointer',
-                }}
-              >
-                <option value="">전체</option>
-                {divisions.map(d => (
-                  <option key={d.division} value={d.division}>{d.division}</option>
-                ))}
-              </select>
-            )}
-          </div>
+          {/* Carousel */}
+          {weeklyLoading ? <LoadingSpinner /> : weeklyBargains.length > 0 ? (
+            <div
+              ref={setCarouselRef}
+              style={{
+                display: 'flex',
+                overflowX: 'auto',
+                scrollSnapType: 'x mandatory',
+                gap: 12,
+                paddingBottom: 4,
+                WebkitOverflowScrolling: 'touch',
+              }}
+            >
+              {weeklyBargains.map((item, i) => (
+                <div
+                  key={item.id}
+                  className="press-effect"
+                  onClick={() => router.push(`/article/${item.id}`)}
+                  style={{
+                    minWidth: 280,
+                    maxWidth: 280,
+                    scrollSnapAlign: 'start',
+                    background: 'var(--white)',
+                    borderRadius: 'var(--radius-lg)',
+                    boxShadow: 'var(--shadow-card)',
+                    padding: 'var(--space-12) var(--space-16)',
+                    cursor: 'pointer',
+                    flexShrink: 0,
+                  }}
+                >
+                  {/* Rank + Badges */}
+                  <div className="flex items-center gap-6" style={{ marginBottom: 6 }}>
+                    <span style={{
+                      width: 22, height: 22, borderRadius: '50%',
+                      background: i < 3 ? 'var(--red-500)' : 'var(--gray-300)',
+                      color: 'white', fontSize: 11, fontWeight: 700,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                    }}>{i + 1}</span>
+                    <BargainBadge keyword={item.bargain_keyword} bargainType={item.bargain_type} />
+                  </div>
 
-          {regionalLoading ? <LoadingSpinner /> : regionalBargains.length > 0 ? (
-            <div className="card">
-              <div className="card-body" style={{ padding: 0 }}>
-                {regionalBargains.map((a, i) => (
-                  <RegionalBargainRow key={a.id} item={a} rank={i + 1} />
-                ))}
-              </div>
+                  {/* Complex name + Division */}
+                  <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 2 }} className="truncate">{item.complex_name}</div>
+                  <div className="text-xs text-gray" style={{ marginBottom: 6 }}>
+                    {item.division}{item.total_households ? ` · ${item.total_households.toLocaleString()}세대` : ''}
+                  </div>
+
+                  <div style={{ borderTop: '1px solid var(--border)', paddingTop: 6 }}>
+                    {/* Price + Score */}
+                    <div className="flex items-center justify-between" style={{ marginBottom: 2 }}>
+                      <span style={{ fontWeight: 700, fontSize: 15, color: 'var(--blue-600)' }}>
+                        {item.formatted_price || formatWon(item.deal_price)}
+                      </span>
+                      <ScoreBreakdownPopover articleId={item.id} bargainScore={item.bargain_score}>
+                        <span style={{
+                          background: 'var(--orange-50)',
+                          color: 'var(--orange-500)',
+                          padding: '1px 6px',
+                          borderRadius: 4,
+                          fontWeight: 600,
+                          fontSize: 10,
+                        }}>점수 {item.bargain_score}</span>
+                      </ScoreBreakdownPopover>
+                    </div>
+                    {/* Area + space_name */}
+                    <div className="text-xs text-gray">
+                      {formatAreaFull(item.exclusive_space, item.supply_space)}
+                      {item.space_name && ` ${item.space_name}`}
+                    </div>
+                    {/* Floor + Dong + Direction + Date */}
+                    <div className="text-xs text-gray" style={{ marginTop: 2 }}>
+                      {item.target_floor && <span>{item.target_floor}/{item.total_floor}층</span>}
+                      {item.dong_name && <span> · {item.dong_name}</span>}
+                      {item.direction && <span> · {item.direction}</span>}
+                      {item.first_seen_at && <span> · {relativeDate(item.first_seen_at)}</span>}
+                    </div>
+                    {/* Description */}
+                    {item.description && (
+                      <p className="text-xs text-gray truncate" style={{ marginTop: 2 }}>{item.description}</p>
+                    )}
+                  </div>
+                </div>
+              ))}
             </div>
           ) : (
             <div className="text-sm text-gray" style={{ padding: 'var(--space-16)', textAlign: 'center' }}>
-              해당 지역에 최근 7일 가격 급매가 없습니다
+              해당 지역에 이번 주 급매가 없습니다
             </div>
           )}
         </section>
@@ -298,7 +289,7 @@ export default function HomePage() {
         )}
 
         {/* Ad: after price drops */}
-        <InlineBannerAd />
+        <InlineBannerAd unit="DAN-A6VYnFhKoJNfuhHV" />
       </div>
     </div>
   );
@@ -394,53 +385,6 @@ function DongRankingArticles({ division, sector }: { division: string; sector: s
           </div>
         </div>
       ))}
-    </div>
-  );
-}
-
-function RegionalBargainRow({ item, rank }: { item: { id: number; deal_price: number; formatted_price?: string | null; exclusive_space: number; target_floor?: string | null; total_floor?: string | null; bargain_score: number; bargain_keyword?: string | null; bargain_type?: string | null; complex_name: string; complex_id: number; division?: string | null }; rank: number }) {
-  const nav = useRouter();
-  return (
-    <div
-      onClick={() => nav.push(`/article/${item.id}`)}
-      style={{
-        padding: 'var(--space-12) var(--space-16)',
-        borderBottom: '1px solid var(--border)',
-        cursor: 'pointer',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 10,
-      }}
-    >
-      <span style={{
-        width: 22, height: 22, borderRadius: '50%',
-        background: rank <= 3 ? 'var(--red-500)' : 'var(--gray-300)',
-        color: 'white', fontSize: 11, fontWeight: 700,
-        display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-      }}>{rank}</span>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div className="flex items-center justify-between">
-          <div className="truncate" style={{ fontWeight: 600, fontSize: 14 }}>
-            {item.complex_name} <span className="text-xs text-gray">{formatArea(item.exclusive_space)}</span>
-          </div>
-          <span style={{ fontWeight: 700, fontSize: 14, color: 'var(--blue-600)', flexShrink: 0, marginLeft: 8 }}>
-            {item.formatted_price || formatWon(item.deal_price)}
-          </span>
-        </div>
-        <div className="flex items-center gap-6 text-xs text-gray" style={{ marginTop: 2 }}>
-          <span style={{
-            background: 'var(--orange-50)',
-            color: 'var(--orange-500)',
-            padding: '1px 6px',
-            borderRadius: 4,
-            fontWeight: 600,
-            fontSize: 10,
-          }}>점수 {item.bargain_score}</span>
-          {item.target_floor && <span>{item.target_floor}/{item.total_floor}층</span>}
-          {item.bargain_keyword && <span style={{ color: 'var(--red-500)' }}>{item.bargain_keyword}</span>}
-          {item.division && <span>{item.division}</span>}
-        </div>
-      </div>
     </div>
   );
 }

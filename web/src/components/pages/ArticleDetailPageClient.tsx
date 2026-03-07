@@ -14,10 +14,14 @@ import PriceAssessment from '@/components/PriceAssessment';
 import PriceTimeline from '@/components/PriceTimeline';
 import InlineBannerAd from '@/components/InlineBannerAd';
 
-export default function ArticleDetailPage() {
+interface ArticleDetailProps {
+  initialArticle?: any;
+}
+
+export default function ArticleDetailPage({ initialArticle }: ArticleDetailProps = {}) {
   const { id } = useParams<{ id: string }>();
   const nav = useRouter();
-  const { data: article, loading } = useArticle(id);
+  const { data: article, loading } = useArticle(id, initialArticle);
   const { data: history } = usePriceHistory(id);
   const { data: assessment } = useAssessment(id);
   const assessmentRef = useRef<HTMLDivElement>(null);

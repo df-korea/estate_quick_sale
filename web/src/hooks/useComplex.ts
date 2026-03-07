@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch, apiPost } from '../lib/api';
 import type { Complex, ComplexSearchResult, ComplexArticle, ComplexPyeongType, ComplexDong } from '../types';
 
@@ -55,12 +55,14 @@ export function useComplexSearch(query: string) {
   return { results, loading };
 }
 
-export function useComplex(id: string | undefined) {
-  const [data, setData] = useState<Complex | null>(null);
-  const [loading, setLoading] = useState(true);
+export function useComplex(id: string | undefined, initialData?: Complex | null) {
+  const [data, setData] = useState<Complex | null>(initialData ?? null);
+  const [loading, setLoading] = useState(!initialData);
+  const skipFirst = useRef(!!initialData);
 
   useEffect(() => {
     if (!id) return;
+    if (skipFirst.current) { skipFirst.current = false; return; }
     setLoading(true);
     apiFetch<Complex>(`/complexes/${id}`)
       .then(setData)

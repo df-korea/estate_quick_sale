@@ -1,12 +1,18 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useComplexSearch, usePopularComplexes } from '@/hooks/useComplex';
 import { useWatchlist } from '@/hooks/useWatchlist';
+import { useRegionalTopBargains, useRegionalTopDivisions } from '@/hooks/useBargains';
+import { useSidoHeatmap } from '@/hooks/useMapData';
+import type { PropertyType, BargainMode } from '@/types';
+import { formatWon, abbreviateCity } from '@/utils/format';
+import { HOUSEHOLD_OPTIONS, AREA_OPTIONS, BUILD_YEAR_OPTIONS } from '@/utils/constants';
 import LoadingSpinner from '@/components/LoadingSpinner';
 import EmptyState from '@/components/EmptyState';
-import { formatWon } from '@/utils/format';
+import RegionalBargainRow from '@/components/RegionalBargainRow';
+import DualRangeSlider from '@/components/DualRangeSlider';
 
 export default function SearchPage() {
   const [query, setQuery] = useState('');
@@ -14,6 +20,79 @@ export default function SearchPage() {
   const { data: popularComplexes, loading: popularLoading } = usePopularComplexes();
   const { data: watchlistData, loading: watchlistLoading } = useWatchlist();
   const nav = useRouter();
+
+  // Regional TOP10 state
+  const { data: sidoHeatmap } = useSidoHeatmap();
+  const sidoList = useMemo(() =>
+    [...sidoHeatmap.map(s => s.sido_name).filter(Boolean)].sort((a, b) => {
+      const aa = abbreviateCity(a), bb = abbreviateCity(b);
+      if (aa === '서울') return -1;
+      if (bb === '서울') return 1;
+      if (aa === '경기') return -1;
+      if (bb === '경기') return 1;
+      return aa.localeCompare(bb, 'ko');
+    }),
+    [sidoHeatmap]
+  );
+  const [selectedSido, setSelectedSido] = useState<string | null>(null);
+  const [selectedSigungu, setSelectedSigungu] = useState<string | null>(null);
+  const [regionalPropertyType, setRegionalPropertyType] = useState<PropertyType>('APT');
+  const [priceMin, setPriceMin] = useState<number | null>(null);
+  const [priceMax, setPriceMax] = useState<number | null>(null);
+  const [bargainSort, setBargainSort] = useState('score_desc');
+  const [bargainType, setBargainType] = useState<BargainMode>('all');
+  const [minHouseholds, setMinHouseholds] = useState<number | null>(null);
+  const [minArea, setMinArea] = useState<number | null>(null);
+  const [maxArea, setMaxArea] = useState<number | null>(null);
+  const [maxBuildYear, setMaxBuildYear] = useState<number | null>(null);
+  const [filterOpen, setFilterOpen] = useState(false);
+
+  const activeSido = selectedSido || sidoList[0] || null;
+  const { data: divisionsRaw } = useRegionalTopDivisions(activeSido, regionalPropertyType);
+  const divisions = [...divisionsRaw].sort((a, b) => a.division.localeCompare(b.division, 'ko'));
+  const { data: regionalBargains, loading: regionalLoading } = useRegionalTopBargains(
+    activeSido, selectedSigungu, 10, regionalPropertyType, priceMin, priceMax, bargainSort, bargainType,
+    minHouseholds, minArea, maxArea, maxBuildYear
+  );
+
+  // Count active filters (excluding defaults)
+  const activeFilterCount = [
+    priceMin, priceMax, minHouseholds, minArea, maxArea, maxBuildYear,
+    bargainType !== 'all' ? bargainType : null,
+    regionalPropertyType !== 'APT' ? regionalPropertyType : null,
+  ].filter(Boolean).length;
+
+  function resetFilters() {
+    setPriceMin(null);
+    setPriceMax(null);
+    setMinHouseholds(null);
+    setMinArea(null);
+    setMaxArea(null);
+    setMaxBuildYear(null);
+    setBargainType('all');
+    setRegionalPropertyType('APT');
+  }
+
+  const selectStyle = {
+    background: 'var(--gray-100)',
+    border: 'none',
+    borderRadius: 'var(--radius-full)',
+    padding: '6px 12px',
+    fontSize: 'var(--text-sm)',
+    color: 'var(--gray-700)',
+    cursor: 'pointer',
+    flexShrink: 0 as const,
+  };
+
+  const filterSelectStyle = {
+    width: '100%',
+    padding: '8px 12px',
+    borderRadius: 8,
+    border: '1px solid var(--gray-200)',
+    background: 'var(--gray-50)',
+    fontSize: 14,
+    color: 'var(--gray-800)',
+  };
 
   return (
     <div className="page">
@@ -126,6 +205,223 @@ export default function SearchPage() {
                 ))}
               </div>
             )}
+
+            {/* 가격급매 TOP10 */}
+            <div style={{ marginBottom: 'var(--space-24)' }}>
+              {/* Title */}
+              <h3 style={{ fontWeight: 700, fontSize: 16, margin: '0 0 8px' }}>가격급매 TOP10</h3>
+              {/* Dropdowns row */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
+                {sidoList.length > 0 && (
+                  <select
+                    value={activeSido || ''}
+                    onChange={e => { setSelectedSido(e.target.value); setSelectedSigungu(null); }}
+                    style={selectStyle}
+                  >
+                    {sidoList.map(sido => (
+                      <option key={sido} value={sido}>{abbreviateCity(sido)}</option>
+                    ))}
+                  </select>
+                )}
+                {divisions.length > 0 && (
+                  <select
+                    value={selectedSigungu || ''}
+                    onChange={e => setSelectedSigungu(e.target.value || null)}
+                    style={selectStyle}
+                  >
+                    <option value="">전체</option>
+                    {divisions.map(d => (
+                      <option key={d.division} value={d.division}>{d.division}</option>
+                    ))}
+                  </select>
+                )}
+                <select
+                  value={bargainSort}
+                  onChange={e => setBargainSort(e.target.value)}
+                  style={selectStyle}
+                >
+                  <option value="score_desc">점수순</option>
+                  <option value="newest">최신순</option>
+                  <option value="price_asc">낮은가격순</option>
+                  <option value="price_desc">높은가격순</option>
+                </select>
+                <button
+                  onClick={() => setFilterOpen(v => !v)}
+                  style={{
+                    ...selectStyle,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 4,
+                    background: activeFilterCount > 0 ? 'var(--blue-50)' : 'var(--gray-100)',
+                    color: activeFilterCount > 0 ? 'var(--blue-600)' : 'var(--gray-700)',
+                  }}
+                >
+                  필터{activeFilterCount > 0 && (
+                    <span style={{
+                      background: 'var(--blue-500)',
+                      color: 'white',
+                      borderRadius: '50%',
+                      width: 16,
+                      height: 16,
+                      fontSize: 10,
+                      fontWeight: 700,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}>{activeFilterCount}</span>
+                  )}
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                    style={{ transform: filterOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}>
+                    <path d="M6 9l6 6 6-6" />
+                  </svg>
+                </button>
+              </div>
+
+              {/* Collapsible filter section */}
+              {filterOpen && (
+                <div style={{
+                  background: 'var(--gray-50)',
+                  borderRadius: 'var(--radius-lg)',
+                  padding: '12px 16px',
+                  marginBottom: 12,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 12,
+                }}>
+                  {/* Row: 급매유형 + 물건유형 */}
+                  <div style={{ display: 'flex', gap: 12 }}>
+                    <div style={{ flex: 1 }}>
+                      <label className="text-xs text-gray" style={{ display: 'block', marginBottom: 4 }}>급매유형</label>
+                      <div className="flex gap-6">
+                        {[
+                          { value: 'all' as BargainMode, label: '전체' },
+                          { value: 'keyword' as BargainMode, label: '키워드' },
+                          { value: 'price' as BargainMode, label: '가격' },
+                        ].map(m => (
+                          <button
+                            key={m.value}
+                            className={`chip ${bargainType === m.value ? 'chip--active' : ''}`}
+                            onClick={() => setBargainType(m.value)}
+                            style={{ fontSize: 'var(--text-sm)' }}
+                          >{m.label}</button>
+                        ))}
+                      </div>
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <label className="text-xs text-gray" style={{ display: 'block', marginBottom: 4 }}>물건유형</label>
+                      <select
+                        value={regionalPropertyType}
+                        onChange={e => setRegionalPropertyType(e.target.value as PropertyType)}
+                        style={filterSelectStyle}
+                      >
+                        <option value="all">전체</option>
+                        <option value="APT">아파트</option>
+                        <option value="OPST">오피스텔</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Price slider */}
+                  <div>
+                    <label className="text-xs text-gray" style={{ display: 'block', marginBottom: 4 }}>가격</label>
+                    <DualRangeSlider
+                      min={priceMin}
+                      max={priceMax}
+                      onMinChange={setPriceMin}
+                      onMaxChange={setPriceMax}
+                    />
+                  </div>
+
+                  {/* Row: 세대수 + 입주년차 */}
+                  <div style={{ display: 'flex', gap: 12 }}>
+                    <div style={{ flex: 1 }}>
+                      <label className="text-xs text-gray" style={{ display: 'block', marginBottom: 4 }}>세대수</label>
+                      <select
+                        value={minHouseholds ?? ''}
+                        onChange={e => setMinHouseholds(e.target.value ? Number(e.target.value) : null)}
+                        style={filterSelectStyle}
+                      >
+                        <option value="">전체</option>
+                        {HOUSEHOLD_OPTIONS.map(o => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <label className="text-xs text-gray" style={{ display: 'block', marginBottom: 4 }}>입주년차</label>
+                      <select
+                        value={maxBuildYear ?? ''}
+                        onChange={e => setMaxBuildYear(e.target.value ? Number(e.target.value) : null)}
+                        style={filterSelectStyle}
+                      >
+                        <option value="">전체</option>
+                        {BUILD_YEAR_OPTIONS.map(o => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Area range */}
+                  <div>
+                    <label className="text-xs text-gray" style={{ display: 'block', marginBottom: 4 }}>전용면적</label>
+                    <div className="flex gap-8 items-center">
+                      <select
+                        value={minArea ?? ''}
+                        onChange={e => setMinArea(e.target.value ? Number(e.target.value) : null)}
+                        style={{ ...filterSelectStyle, flex: 1 }}
+                      >
+                        <option value="">최소</option>
+                        {AREA_OPTIONS.map(o => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                      </select>
+                      <span className="text-xs text-gray">~</span>
+                      <select
+                        value={maxArea ?? ''}
+                        onChange={e => setMaxArea(e.target.value ? Number(e.target.value) : null)}
+                        style={{ ...filterSelectStyle, flex: 1 }}
+                      >
+                        <option value="">최대</option>
+                        {AREA_OPTIONS.map(o => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Reset button */}
+                  {activeFilterCount > 0 && (
+                    <button
+                      onClick={resetFilters}
+                      className="press-effect"
+                      style={{
+                        padding: '8px 0',
+                        fontSize: 13,
+                        color: 'var(--red-500)',
+                        fontWeight: 600,
+                        textAlign: 'center',
+                      }}
+                    >필터 초기화</button>
+                  )}
+                </div>
+              )}
+
+              {/* Results */}
+              {regionalLoading ? <LoadingSpinner /> : regionalBargains.length > 0 ? (
+                <div className="card">
+                  <div className="card-body" style={{ padding: 0 }}>
+                    {regionalBargains.map((a, i) => (
+                      <RegionalBargainRow key={a.id} item={a} rank={i + 1} />
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="text-sm text-gray" style={{ padding: 'var(--space-16)', textAlign: 'center' }}>
+                  해당 지역에 최근 7일 가격 급매가 없습니다
+                </div>
+              )}
+            </div>
 
             {/* 인기 단지 */}
             {popularLoading ? <LoadingSpinner /> : popularComplexes.length > 0 ? (

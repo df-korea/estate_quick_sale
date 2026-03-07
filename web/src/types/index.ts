@@ -95,6 +95,7 @@ export interface ComplexArticle {
   rent_price: number | null;
   formatted_price: string;
   exclusive_space: number;
+  supply_space: number | null;
   space_name: string | null;
   dong_name: string | null;
   target_floor: string | null;
@@ -423,6 +424,29 @@ export interface MarketStats {
   area_type_count: number;
   earliest: number | null;
   latest: number | null;
+}
+
+/* ── Weekly Featured Bargain ── */
+export interface WeeklyFeaturedItem {
+  id: number;
+  deal_price: number;
+  formatted_price: string | null;
+  exclusive_space: number;
+  supply_space: number | null;
+  target_floor: string | null;
+  total_floor: string | null;
+  bargain_score: number;
+  bargain_keyword: string | null;
+  bargain_type: 'keyword' | 'price' | 'both' | null;
+  dong_name: string | null;
+  direction: string | null;
+  description: string | null;
+  space_name: string | null;
+  first_seen_at: string;
+  complex_name: string;
+  complex_id: number;
+  total_households: number | null;
+  division: string | null;
 }
 
 /* ── Dong Rankings ── */

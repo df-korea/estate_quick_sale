@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { apiFetch } from '../lib/api';
 import type { AnalysisOverview, LeaderboardItem, PriceChangeItem, TopPriceDropItem } from '../types';
 
@@ -18,14 +18,16 @@ export function useAnalysisOverview() {
   return { data, loading };
 }
 
-export function useLeaderboard(limit = 10, bargainType?: string) {
-  const [data, setData] = useState<LeaderboardItem[]>([]);
-  const [loading, setLoading] = useState(true);
+export function useLeaderboard(limit = 10, bargainType?: string, initialData?: LeaderboardItem[]) {
+  const [data, setData] = useState<LeaderboardItem[]>(initialData || []);
+  const [loading, setLoading] = useState(!initialData);
+  const skipFirst = useRef(!!initialData && (!bargainType || bargainType === 'all'));
 
   useEffect(() => {
+    if (skipFirst.current) { skipFirst.current = false; return; }
+    setLoading(true);
     const qs = new URLSearchParams({ limit: String(limit) });
     if (bargainType && bargainType !== 'all') qs.set('bargain_type', bargainType);
-    setLoading(true);
     apiFetch<LeaderboardItem[]>(`/analysis/bargain-leaderboard?${qs}`)
       .then(setData)
       .catch(() => setData([]))
@@ -49,11 +51,13 @@ export function useRecentPriceChanges(limit = 10) {
   return { data, loading };
 }
 
-export function useTopPriceDrops(limit = 10) {
-  const [data, setData] = useState<TopPriceDropItem[]>([]);
-  const [loading, setLoading] = useState(true);
+export function useTopPriceDrops(limit = 10, initialData?: TopPriceDropItem[]) {
+  const [data, setData] = useState<TopPriceDropItem[]>(initialData || []);
+  const [loading, setLoading] = useState(!initialData);
+  const skipFirst = useRef(!!initialData);
 
   useEffect(() => {
+    if (skipFirst.current) { skipFirst.current = false; return; }
     setLoading(true);
     apiFetch<TopPriceDropItem[]>(`/analysis/top-price-drops?limit=${limit}`)
       .then(setData)

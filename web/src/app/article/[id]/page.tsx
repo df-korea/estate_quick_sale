@@ -1,15 +1,20 @@
 import type { Metadata } from 'next';
 import { getArticleById } from '@/lib/queries';
+import { cached } from '@api/_lib/cache.js';
 import ArticleDetailPageClient from '@/components/pages/ArticleDetailPageClient';
 
 interface Props {
   params: Promise<{ id: string }>;
 }
 
+async function getArticleCached(id: number) {
+  return cached(`ssr:article:${id}`, 300_000, () => getArticleById(id));
+}
+
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { id } = await params;
   try {
-    const article = await getArticleById(Number(id));
+    const article = await getArticleCached(Number(id));
     if (!article) {
       return { title: '매물을 찾을 수 없습니다' };
     }
@@ -25,7 +30,6 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       openGraph: {
         title: `${title} | 부동산 급매 레이더`,
         description,
-        images: [{ url: '/thumbnails/logo-08-coral-1932x828.png' }],
       },
     };
   } catch {
@@ -33,6 +37,8 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   }
 }
 
-export default function ArticleDetailPage() {
-  return <ArticleDetailPageClient />;
+export default async function ArticleDetailPage({ params }: Props) {
+  const { id } = await params;
+  const article = await getArticleCached(Number(id)).catch(() => null);
+  return <ArticleDetailPageClient initialArticle={article} />;
 }

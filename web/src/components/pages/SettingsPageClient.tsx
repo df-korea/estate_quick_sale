@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSettings } from '@/hooks/useSettings';
 import { useAuth } from '@/hooks/useAuth';
+import { isTossWebView } from '@/lib/env';
 import { apiFetch, apiPut } from '@/lib/api';
 import type { BargainSort, BargainMode } from '@/types';
 
@@ -11,6 +12,35 @@ export default function SettingsPage() {
   const { settings, update } = useSettings();
   const { user, logout } = useAuth();
   const nav = useRouter();
+  const isToss = isTossWebView();
+
+  // Web user (not logged in + not Toss) → show info card
+  if (!user && !isToss) {
+    return (
+      <div className="page">
+        <div className="page-header"><h1>설정</h1></div>
+        <div className="page-content">
+          <div style={{
+            background: 'linear-gradient(135deg, #3182f6, #1b64da)',
+            borderRadius: 'var(--radius-lg)',
+            padding: '32px 24px',
+            textAlign: 'center',
+            color: 'white',
+            margin: '20px 0',
+            boxShadow: '0 4px 16px rgba(49, 130, 246, 0.3)',
+          }}>
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.5" style={{ margin: '0 auto 12px', display: 'block' }}>
+              <rect x="5" y="2" width="14" height="20" rx="2" ry="2" />
+              <line x1="12" y1="18" x2="12" y2="18" strokeLinecap="round" strokeWidth="2" />
+            </svg>
+            <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 8, margin: '0 0 8px' }}>설정은 토스 미니앱에서!</h3>
+            <p style={{ fontSize: 14, opacity: 0.9, marginBottom: 12, margin: '0 0 12px' }}>관심목록, 알림 등 더 많은 기능을 이용하세요.</p>
+            <p style={{ fontSize: 13, opacity: 0.6, margin: 0 }}>현재 토스 미니앱 출시 준비중입니다.</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // Profile state
   const [editing, setEditing] = useState(false);

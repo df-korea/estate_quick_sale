@@ -1,5 +1,9 @@
 'use client';
 
+// Simple in-memory GET cache (30s TTL) to avoid redundant API calls on page navigation
+const apiCache = new Map<string, { data: unknown; expiresAt: number }>();
+const API_CACHE_TTL = 30_000;
+
 function getAuthToken(): string | null {
   if (typeof window === 'undefined') return null;
   return localStorage.getItem('auth_token');
@@ -11,11 +15,19 @@ function authHeaders(): Record<string, string> {
 }
 
 export async function apiFetch<T>(path: string): Promise<T> {
+  const now = Date.now();
+  const cached = apiCache.get(path);
+  if (cached && now < cached.expiresAt) {
+    return cached.data as T;
+  }
+
   const res = await fetch(`/api${path}`, {
     headers: authHeaders(),
   });
   if (!res.ok) throw new Error(`API error: ${res.status}`);
-  return res.json();
+  const data = await res.json();
+  apiCache.set(path, { data, expiresAt: now + API_CACHE_TTL });
+  return data;
 }
 
 export async function apiPost<T>(path: string, body: unknown): Promise<T> {

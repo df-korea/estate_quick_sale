@@ -1,15 +1,20 @@
 import type { Metadata } from 'next';
 import { getComplexById } from '@/lib/queries';
+import { cached } from '@api/_lib/cache.js';
 import ComplexDetailPageClient from '@/components/pages/ComplexDetailPageClient';
 
 interface Props {
   params: Promise<{ id: string }>;
 }
 
+async function getComplexCached(id: number) {
+  return cached(`ssr:complex:${id}`, 300_000, () => getComplexById(id));
+}
+
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { id } = await params;
   try {
-    const complex = await getComplexById(Number(id));
+    const complex = await getComplexCached(Number(id));
     if (!complex) {
       return { title: '단지를 찾을 수 없습니다' };
     }
@@ -23,7 +28,6 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       openGraph: {
         title: `${title} | 부동산 급매 레이더`,
         description,
-        images: [{ url: '/thumbnails/logo-08-coral-1932x828.png' }],
       },
     };
   } catch {
@@ -31,6 +35,8 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   }
 }
 
-export default function ComplexDetailPage() {
-  return <ComplexDetailPageClient />;
+export default async function ComplexDetailPage({ params }: Props) {
+  const { id } = await params;
+  const complex = await getComplexCached(Number(id)).catch(() => null);
+  return <ComplexDetailPageClient initialComplex={complex} />;
 }

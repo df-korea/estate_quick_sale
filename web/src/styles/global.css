@@ -320,6 +320,68 @@ img { display: block; max-width: 100%; }
   border-radius: var(--radius-sm);
 }
 
+/* ── Drag Scroll (desktop mouse) ── */
+.drag-scroll { cursor: grab; user-select: none; }
+.drag-scroll.dragging { cursor: grabbing; scroll-snap-type: none !important; }
+
+/* ── Dual Range Slider ── */
+.dual-range-wrapper {
+  position: relative;
+  height: 32px;
+}
+.dual-range-track {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: var(--gray-200);
+  border-radius: 2px;
+  transform: translateY(-50%);
+}
+.dual-range-active {
+  position: absolute;
+  top: 50%;
+  height: 4px;
+  background: var(--blue-500);
+  border-radius: 2px;
+  transform: translateY(-50%);
+}
+.dual-range-input {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  pointer-events: none;
+  z-index: 2;
+}
+.dual-range-input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--blue-500);
+  border: 2px solid white;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  pointer-events: auto;
+  cursor: pointer;
+}
+.dual-range-input::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--blue-500);
+  border: 2px solid white;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  pointer-events: auto;
+  cursor: pointer;
+}
+
 /* ── Toss WebView ── */
 .toss-webview .page-header { display: none; }
 .toss-webview .page { padding-top: 0; }

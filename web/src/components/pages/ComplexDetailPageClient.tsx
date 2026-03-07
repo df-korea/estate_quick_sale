@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { useComplex, useComplexArticles, useComplexPyeongTypes, useComplexDongs, trackComplexView } from '@/hooks/useComplex';
 import { useMarketStats, useMarketAreaTypes, useMarketTrend, useMarketTransactions, useMarketFloorAnalysis } from '@/hooks/useMarketPrices';
 import { useWatchlist } from '@/hooks/useWatchlist';
-import { formatPrice, formatTradePrice, formatArea, relativeDate } from '@/utils/format';
+import { formatPrice, formatTradePrice, formatArea, formatAreaFull, relativeDate } from '@/utils/format';
 import { extent, linearScale } from '@/utils/chart';
 import LoadingSpinner from '@/components/LoadingSpinner';
 import EmptyState from '@/components/EmptyState';
@@ -14,10 +14,14 @@ import type { MarketTrendItem, MarketTransaction, MarketFloorAnalysis } from '@/
 
 type Tab = 'articles' | 'market';
 
-export default function ComplexDetailPage() {
+interface ComplexDetailProps {
+  initialComplex?: any;
+}
+
+export default function ComplexDetailPage({ initialComplex }: ComplexDetailProps = {}) {
   const { id } = useParams<{ id: string }>();
   const nav = useRouter();
-  const { data: complex, loading } = useComplex(id);
+  const { data: complex, loading } = useComplex(id, initialComplex);
   const [activeTab, setActiveTab] = useState<Tab>('articles');
   const [tradeFilter, setTradeFilter] = useState('A1'); // all, A1, B1, B2, bargain_keyword, bargain_price
   const effectiveTradeType = tradeFilter.startsWith('bargain') ? 'A1' : tradeFilter;
@@ -192,7 +196,7 @@ export default function ComplexDetailPage() {
                     )}
                     <div className="flex items-center justify-between text-sm text-gray" style={{ marginTop: 'var(--space-4)' }}>
                       <span>
-                        {formatArea(a.exclusive_space)}
+                        {formatAreaFull(a.exclusive_space, a.supply_space)}
                         {a.space_name && ` ${a.space_name}`}
                         {a.target_floor && ` · ${a.target_floor}/${a.total_floor}층`}
                         {a.dong_name && ` · ${a.dong_name}`}

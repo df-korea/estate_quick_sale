@@ -3,6 +3,7 @@ import NotificationSettingsPageClient from '@/components/pages/NotificationSetti
 
 export const metadata: Metadata = {
   title: '알림 설정',
+  robots: { index: false, follow: false },
 };
 
 export default function NotificationSettingsPage() {

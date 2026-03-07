@@ -18,10 +18,7 @@ export default function TabBar({ isLoggedIn, isToss }: TabBarProps) {
   const pathname = usePathname();
   const nav = useRouter();
 
-  // 비로그인 + 비토스 환경: 설정 탭 숨김
-  const tabs = (!isLoggedIn && !isToss)
-    ? ALL_TABS.filter(t => !t.authRequired)
-    : ALL_TABS;
+  const tabs = ALL_TABS;
 
   return (
     <nav className="fixed-bottom" style={{

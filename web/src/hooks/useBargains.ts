@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '../lib/api';
-import type { BargainArticle, BargainSort, BargainMode, RegionBargainGroup } from '../types';
+import type { BargainArticle, BargainSort, BargainMode, RegionBargainGroup, WeeklyFeaturedItem } from '../types';
 
 export function useBargains(limit = 50, bargainType?: BargainMode) {
   const [data, setData] = useState<BargainArticle[]>([]);
@@ -71,7 +71,12 @@ export function useFilteredBargains(params: FilteredParams) {
   return { data, loading, refetch: fetch };
 }
 
-export function useRegionalTopBargains(sido: string | null, sigungu: string | null, limit = 10, propertyType?: string, priceMin?: number | null, priceMax?: number | null) {
+export function useRegionalTopBargains(
+  sido: string | null, sigungu: string | null, limit = 10,
+  propertyType?: string, priceMin?: number | null, priceMax?: number | null,
+  sort?: string, bargainType?: string,
+  minHouseholds?: number | null, minArea?: number | null, maxArea?: number | null, maxBuildYear?: number | null
+) {
   const [data, setData] = useState<BargainArticle[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -83,11 +88,33 @@ export function useRegionalTopBargains(sido: string | null, sigungu: string | nu
     if (propertyType && propertyType !== 'all') qs.set('property_type', propertyType);
     if (priceMin) qs.set('price_min', String(priceMin));
     if (priceMax) qs.set('price_max', String(priceMax));
+    if (sort && sort !== 'score_desc') qs.set('sort', sort);
+    if (bargainType && bargainType !== 'price') qs.set('bargain_type', bargainType);
+    if (minHouseholds) qs.set('min_households', String(minHouseholds));
+    if (minArea) qs.set('min_area', String(minArea));
+    if (maxArea) qs.set('max_area', String(maxArea));
+    if (maxBuildYear) qs.set('max_build_year', String(maxBuildYear));
     apiFetch<BargainArticle[]>(`/bargains/regional-top?${qs}`)
       .then(setData)
       .catch(() => setData([]))
       .finally(() => setLoading(false));
-  }, [sido, sigungu, limit, propertyType, priceMin, priceMax]);
+  }, [sido, sigungu, limit, propertyType, priceMin, priceMax, sort, bargainType, minHouseholds, minArea, maxArea, maxBuildYear]);
+
+  return { data, loading };
+}
+
+export function useWeeklyFeaturedBargains(sido: string | null) {
+  const [data, setData] = useState<WeeklyFeaturedItem[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!sido) { setData([]); return; }
+    setLoading(true);
+    apiFetch<WeeklyFeaturedItem[]>(`/bargains/weekly-featured?sido=${encodeURIComponent(sido)}`)
+      .then(setData)
+      .catch(() => setData([]))
+      .finally(() => setLoading(false));
+  }, [sido]);
 
   return { data, loading };
 }

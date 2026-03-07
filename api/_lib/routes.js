@@ -1,6 +1,6 @@
 import { getPool } from './db.js';
 import { extractUser } from './jwt.js';
-import { cached } from './cache.js';
+import { cached, warmup } from './cache.js';
 
 // ── Helpers ──
 
@@ -74,6 +74,7 @@ const routes = [
   { m: 'GET', p: '/bargains/filtered', h: handleBargainsFiltered },
   { m: 'GET', p: '/bargains/by-region', h: handleBargainsByRegion },
   { m: 'GET', p: '/bargains/by-complexes', h: handleBargainsByComplexes },
+  { m: 'GET', p: '/bargains/weekly-featured', h: handleWeeklyFeaturedBargains },
   { m: 'GET', p: '/bargains/regional-top', h: handleRegionalTopBargains },
   { m: 'GET', p: '/bargains/regional-top-divisions', h: handleRegionalTopDivisions },
   { m: 'GET', p: '/bargains', h: handleBargains },
@@ -154,6 +155,7 @@ const routes = [
 ];
 
 export async function route(req, res, path) {
+  runWarmup();
   for (const r of routes) {
     if (r.m !== req.method) continue;
     const params = matchPath(r.p, path);
@@ -170,70 +172,90 @@ export async function route(req, res, path) {
   return false;
 }
 
+// ── Cache warmup on startup ──
+// Pre-populate critical caches so first users after PM2 restart don't wait.
+let _warmedUp = false;
+function runWarmup() {
+  if (_warmedUp) return;
+  _warmedUp = true;
+  setTimeout(async () => {
+    try {
+      const pool = getPool();
+      // briefing
+      warmup('briefing', 300_000, () => buildBriefingData(pool));
+      // sido heatmap (default params)
+      warmup('map:sido:all:', 600_000, () => buildSidoHeatmapData(pool, 'all', ''));
+      // stats
+      warmup('stats', 600_000, () => buildStatsData(pool));
+    } catch (_) { /* ignore warmup errors */ }
+  }, 1000);
+}
+
 // ════════════════════════════════════════
 // Briefing
 // ════════════════════════════════════════
 
+async function buildBriefingData(pool) {
+  const [overview, newBargains, topDrops, hotComplexes] = await Promise.all([
+    pool.query(`
+      SELECT
+        (SELECT count(*)::int FROM articles WHERE is_bargain = true AND article_status = 'active') AS total_bargains,
+        (SELECT count(*)::int FROM articles WHERE article_status = 'active') AS total_articles,
+        (SELECT count(*)::int FROM articles WHERE article_status = 'active' AND first_seen_at >= CURRENT_DATE) AS new_today,
+        (SELECT count(*)::int FROM articles WHERE is_bargain = true AND article_status = 'active' AND first_seen_at >= CURRENT_DATE) AS new_bargains_today,
+        (SELECT count(*)::int FROM price_history WHERE recorded_at >= CURRENT_DATE) AS price_changes_today,
+        (SELECT count(*)::int FROM articles WHERE article_status = 'removed' AND removed_at >= CURRENT_DATE) AS removed_today
+    `),
+    pool.query(`
+      SELECT a.id, a.deal_price, a.formatted_price, a.exclusive_space,
+        c.complex_name, a.bargain_keyword, a.first_seen_at
+      FROM articles a JOIN complexes c ON a.complex_id = c.id
+      WHERE a.is_bargain = true AND a.article_status = 'active'
+      ORDER BY a.first_seen_at DESC LIMIT 5
+    `),
+    pool.query(`
+      SELECT ph.article_id, c.complex_name, a.exclusive_space,
+        ph.deal_price AS new_price, ph.formatted_price,
+        lag(ph.deal_price) OVER (PARTITION BY ph.article_id ORDER BY ph.recorded_at) AS prev_price,
+        ph.recorded_at
+      FROM price_history ph
+      JOIN articles a ON ph.article_id = a.id
+      JOIN complexes c ON a.complex_id = c.id
+      WHERE a.article_status = 'active'
+      ORDER BY ph.recorded_at DESC
+      LIMIT 30
+    `),
+    pool.query(`
+      SELECT c.id AS complex_id, c.complex_name,
+        count(*)::int AS recent_bargains
+      FROM articles a JOIN complexes c ON a.complex_id = c.id
+      WHERE a.is_bargain = true AND a.article_status = 'active'
+        AND a.first_seen_at >= CURRENT_DATE - INTERVAL '3 days'
+      GROUP BY c.id, c.complex_name
+      HAVING count(*) >= 2
+      ORDER BY count(*) DESC
+      LIMIT 5
+    `),
+  ]);
+
+  const drops = topDrops.rows
+    .filter(r => r.prev_price != null && r.new_price < r.prev_price)
+    .slice(0, 5)
+    .map(r => ({
+      ...r,
+      change_pct: Math.round(((r.new_price - r.prev_price) / r.prev_price) * 1000) / 10,
+    }));
+
+  return {
+    summary: overview.rows[0],
+    new_bargains: newBargains.rows,
+    price_drops: drops,
+    hot_complexes: hotComplexes.rows,
+  };
+}
+
 async function handleBriefing(_req, res) {
-  const data = await cached('briefing', 300_000, async () => {
-    const pool = getPool();
-    const [overview, newBargains, topDrops, hotComplexes] = await Promise.all([
-      pool.query(`
-        SELECT
-          (SELECT count(*)::int FROM articles WHERE is_bargain = true AND article_status = 'active') AS total_bargains,
-          (SELECT count(*)::int FROM articles WHERE article_status = 'active') AS total_articles,
-          (SELECT count(*)::int FROM articles WHERE article_status = 'active' AND first_seen_at >= CURRENT_DATE) AS new_today,
-          (SELECT count(*)::int FROM articles WHERE is_bargain = true AND article_status = 'active' AND first_seen_at >= CURRENT_DATE) AS new_bargains_today,
-          (SELECT count(*)::int FROM price_history WHERE recorded_at >= CURRENT_DATE) AS price_changes_today,
-          (SELECT count(*)::int FROM articles WHERE article_status = 'removed' AND removed_at >= CURRENT_DATE) AS removed_today
-      `),
-      pool.query(`
-        SELECT a.id, a.deal_price, a.formatted_price, a.exclusive_space,
-          c.complex_name, a.bargain_keyword, a.first_seen_at
-        FROM articles a JOIN complexes c ON a.complex_id = c.id
-        WHERE a.is_bargain = true AND a.article_status = 'active'
-        ORDER BY a.first_seen_at DESC LIMIT 5
-      `),
-      pool.query(`
-        SELECT ph.article_id, c.complex_name, a.exclusive_space,
-          ph.deal_price AS new_price, ph.formatted_price,
-          lag(ph.deal_price) OVER (PARTITION BY ph.article_id ORDER BY ph.recorded_at) AS prev_price,
-          ph.recorded_at
-        FROM price_history ph
-        JOIN articles a ON ph.article_id = a.id
-        JOIN complexes c ON a.complex_id = c.id
-        WHERE a.article_status = 'active'
-        ORDER BY ph.recorded_at DESC
-        LIMIT 30
-      `),
-      pool.query(`
-        SELECT c.id AS complex_id, c.complex_name,
-          count(*)::int AS recent_bargains
-        FROM articles a JOIN complexes c ON a.complex_id = c.id
-        WHERE a.is_bargain = true AND a.article_status = 'active'
-          AND a.first_seen_at >= CURRENT_DATE - INTERVAL '3 days'
-        GROUP BY c.id, c.complex_name
-        HAVING count(*) >= 2
-        ORDER BY count(*) DESC
-        LIMIT 5
-      `),
-    ]);
-
-    const drops = topDrops.rows
-      .filter(r => r.prev_price != null && r.new_price < r.prev_price)
-      .slice(0, 5)
-      .map(r => ({
-        ...r,
-        change_pct: Math.round(((r.new_price - r.prev_price) / r.prev_price) * 1000) / 10,
-      }));
-
-    return {
-      summary: overview.rows[0],
-      new_bargains: newBargains.rows,
-      price_drops: drops,
-      hot_complexes: hotComplexes.rows,
-    };
-  });
+  const data = await cached('briefing', 300_000, () => buildBriefingData(getPool()));
   res.json(data);
 }
 
@@ -662,7 +684,7 @@ async function handleComplexArticles(req, res) {
   params.push(100);
   const { rows } = await pool.query(`
     SELECT id, article_no, trade_type, deal_price, warranty_price, rent_price,
-      formatted_price, exclusive_space, space_name, dong_name,
+      formatted_price, exclusive_space, supply_space, space_name, dong_name,
       target_floor, total_floor, direction, description,
       is_bargain, bargain_keyword, bargain_type, bargain_score, score_factors, first_seen_at,
       (SELECT count(*)::int FROM price_history ph WHERE ph.article_id = articles.id) AS price_change_count
@@ -1366,38 +1388,46 @@ async function handleRegionalDongArticles(req, res) {
 // Map
 // ════════════════════════════════════════
 
+async function buildSidoHeatmapData(pool, bt, pt) {
+  const bargainFilter = bt === 'keyword'
+    ? `bargain_type IN ('keyword', 'both')`
+    : bt === 'price'
+    ? `bargain_type IN ('price', 'both')`
+    : `is_bargain = true`;
+  const ptFilter = (pt === 'APT' || pt === 'OPST') ? `AND c.property_type = '${pt}'` : '';
+  const { rows } = await pool.query(`
+    WITH ca AS (
+      SELECT complex_id,
+        count(*) AS total_articles,
+        count(*) FILTER (WHERE ${bargainFilter}) AS bargain_count
+      FROM articles
+      WHERE trade_type = 'A1' AND article_status = 'active'
+      GROUP BY complex_id
+    )
+    SELECT c.city AS sido_name,
+      COALESCE(sum(ca.total_articles), 0)::int AS total_articles,
+      COALESCE(sum(ca.bargain_count), 0)::int AS bargain_count,
+      CASE WHEN COALESCE(sum(ca.total_articles), 0) > 0
+        THEN round(
+          COALESCE(sum(ca.bargain_count), 0)::numeric
+          / sum(ca.total_articles)::numeric * 100, 1
+        )
+        ELSE 0
+      END AS bargain_ratio,
+      count(c.id)::int AS complex_count
+    FROM complexes c
+    LEFT JOIN ca ON ca.complex_id = c.id
+    WHERE c.is_active = true AND c.city IS NOT NULL ${ptFilter}
+    GROUP BY c.city
+    ORDER BY bargain_count DESC
+  `);
+  return rows;
+}
+
 async function handleSidoHeatmap(req, res) {
   const bt = req.query.bargain_type || 'all';
   const pt = req.query.property_type || '';
-  const data = await cached(`map:sido:${bt}:${pt}`, 600_000, async () => {
-    const pool = getPool();
-    const bargainFilter = bt === 'keyword'
-      ? `a.bargain_type IN ('keyword', 'both')`
-      : bt === 'price'
-      ? `a.bargain_type IN ('price', 'both')`
-      : `a.is_bargain = true`;
-    const ptFilter = (pt === 'APT' || pt === 'OPST') ? `AND c.property_type = '${pt}'` : '';
-    const { rows } = await pool.query(`
-      SELECT
-        c.city AS sido_name,
-        count(*) FILTER (WHERE a.article_status = 'active')::int AS total_articles,
-        count(*) FILTER (WHERE ${bargainFilter} AND a.article_status = 'active')::int AS bargain_count,
-        CASE WHEN count(*) FILTER (WHERE a.article_status = 'active') > 0
-          THEN round(
-            count(*) FILTER (WHERE ${bargainFilter} AND a.article_status = 'active')::numeric
-            / count(*) FILTER (WHERE a.article_status = 'active')::numeric * 100, 1
-          )
-          ELSE 0
-        END AS bargain_ratio,
-        count(DISTINCT c.id)::int AS complex_count
-      FROM complexes c
-      LEFT JOIN articles a ON a.complex_id = c.id AND a.trade_type = 'A1'
-      WHERE c.is_active = true AND c.city IS NOT NULL ${ptFilter}
-      GROUP BY c.city
-      ORDER BY count(*) FILTER (WHERE ${bargainFilter} AND a.article_status = 'active') DESC
-    `);
-    return rows;
-  });
+  const data = await cached(`map:sido:${bt}:${pt}`, 600_000, () => buildSidoHeatmapData(getPool(), bt, pt));
   res.json(data);
 }
 
@@ -1409,29 +1439,37 @@ async function handleSigunguHeatmap(req, res) {
   const data = await cached(`map:sigungu:${sido}:${bt}:${pt}`, 300_000, async () => {
     const pool = getPool();
     const bargainFilter = bt === 'keyword'
-      ? `a.bargain_type IN ('keyword', 'both')`
+      ? `bargain_type IN ('keyword', 'both')`
       : bt === 'price'
-      ? `a.bargain_type IN ('price', 'both')`
-      : `a.is_bargain = true`;
+      ? `bargain_type IN ('price', 'both')`
+      : `is_bargain = true`;
     const ptFilter = (pt === 'APT' || pt === 'OPST') ? `AND c.property_type = '${pt}'` : '';
     const { rows } = await pool.query(`
+      WITH ca AS (
+        SELECT complex_id,
+          count(*) AS total_articles,
+          count(*) FILTER (WHERE ${bargainFilter}) AS bargain_count
+        FROM articles
+        WHERE trade_type = 'A1' AND article_status = 'active'
+        GROUP BY complex_id
+      )
       SELECT
         ${MERGED_DIVISION} AS sgg_name,
-        count(*) FILTER (WHERE a.article_status = 'active')::int AS total_articles,
-        count(*) FILTER (WHERE ${bargainFilter} AND a.article_status = 'active')::int AS bargain_count,
-        CASE WHEN count(*) FILTER (WHERE a.article_status = 'active') > 0
+        COALESCE(sum(ca.total_articles), 0)::int AS total_articles,
+        COALESCE(sum(ca.bargain_count), 0)::int AS bargain_count,
+        CASE WHEN COALESCE(sum(ca.total_articles), 0) > 0
           THEN round(
-            count(*) FILTER (WHERE ${bargainFilter} AND a.article_status = 'active')::numeric
-            / count(*) FILTER (WHERE a.article_status = 'active')::numeric * 100, 1
+            COALESCE(sum(ca.bargain_count), 0)::numeric
+            / sum(ca.total_articles)::numeric * 100, 1
           )
           ELSE 0
         END AS bargain_ratio,
-        count(DISTINCT c.id)::int AS complex_count
+        count(c.id)::int AS complex_count
       FROM complexes c
-      LEFT JOIN articles a ON a.complex_id = c.id AND a.trade_type = 'A1'
+      LEFT JOIN ca ON ca.complex_id = c.id
       WHERE c.is_active = true AND c.city = $1 ${ptFilter}
       GROUP BY ${MERGED_DIVISION}
-      ORDER BY count(*) FILTER (WHERE ${bargainFilter} AND a.article_status = 'active') DESC
+      ORDER BY bargain_count DESC
     `, [sido]);
     return rows;
   });
@@ -1535,28 +1573,29 @@ async function handleMapBargainsInBounds(req, res) {
 // Stats
 // ════════════════════════════════════════
 
+async function buildStatsData(pool) {
+  const [complexes, articles, bargains, removed, realTx, runs, lastCollection] = await Promise.all([
+    pool.query(`SELECT count(*)::int as count FROM complexes`),
+    pool.query(`SELECT count(*)::int as count FROM articles WHERE article_status='active'`),
+    pool.query(`SELECT count(*)::int as count FROM articles WHERE is_bargain = true AND article_status='active'`),
+    pool.query(`SELECT count(*)::int as count FROM articles WHERE article_status='removed'`),
+    pool.query(`SELECT count(*)::int as count FROM real_transactions`),
+    pool.query(`SELECT * FROM collection_runs ORDER BY started_at DESC LIMIT 5`),
+    pool.query(`SELECT max(last_collected_at) AS last_collected_at FROM complexes`),
+  ]);
+  return {
+    complexCount: complexes.rows[0].count,
+    articleCount: articles.rows[0].count,
+    bargainCount: bargains.rows[0].count,
+    removedCount: removed.rows[0].count,
+    realTransactionCount: realTx.rows[0].count,
+    lastCollectionAt: lastCollection.rows[0].last_collected_at,
+    recentRuns: runs.rows,
+  };
+}
+
 async function handleStats(_req, res) {
-  const data = await cached('stats', 600_000, async () => {
-    const pool = getPool();
-    const [complexes, articles, bargains, removed, realTx, runs, lastCollection] = await Promise.all([
-      pool.query(`SELECT count(*)::int as count FROM complexes`),
-      pool.query(`SELECT count(*)::int as count FROM articles WHERE article_status='active'`),
-      pool.query(`SELECT count(*)::int as count FROM articles WHERE is_bargain = true AND article_status='active'`),
-      pool.query(`SELECT count(*)::int as count FROM articles WHERE article_status='removed'`),
-      pool.query(`SELECT count(*)::int as count FROM real_transactions`),
-      pool.query(`SELECT * FROM collection_runs ORDER BY started_at DESC LIMIT 5`),
-      pool.query(`SELECT max(last_collected_at) AS last_collected_at FROM complexes`),
-    ]);
-    return {
-      complexCount: complexes.rows[0].count,
-      articleCount: articles.rows[0].count,
-      bargainCount: bargains.rows[0].count,
-      removedCount: removed.rows[0].count,
-      realTransactionCount: realTx.rows[0].count,
-      lastCollectionAt: lastCollection.rows[0].last_collected_at,
-      recentRuns: runs.rows,
-    };
-  });
+  const data = await cached('stats', 600_000, () => buildStatsData(getPool()));
   res.json(data);
 }
 
@@ -1818,83 +1857,169 @@ async function handleCommunityUnlike(req, res) {
 // Regional Top Bargains
 // ════════════════════════════════════════
 
+async function handleWeeklyFeaturedBargains(req, res) {
+  const { sido } = req.query;
+  if (!sido) return res.status(400).json({ error: 'sido required' });
+  const cacheKey = `weekly-featured:${sido}`;
+
+  const data = await cached(cacheKey, 120_000, async () => {
+    const pool = getPool();
+    let minPrice;
+    if (sido.includes('서울')) minPrice = 1000000000;       // 서울: 10억
+    else if (sido.includes('경기')) minPrice = 500000000;    // 경기: 5억
+    else minPrice = 300000000;                               // 나머지: 3억
+    const { rows } = await pool.query(`
+      WITH ranked AS (
+        SELECT a.id, a.deal_price, a.formatted_price, a.exclusive_space,
+          a.supply_space, a.target_floor, a.total_floor, a.bargain_score, a.bargain_keyword,
+          a.dong_name, a.direction, a.description, a.space_name, a.bargain_type, a.first_seen_at,
+          c.complex_name, c.id AS complex_id, c.total_households,
+          ${MERGED_DIVISION} AS division,
+          ROW_NUMBER() OVER (PARTITION BY c.id ORDER BY a.bargain_score DESC) AS rn
+        FROM articles a
+        JOIN complexes c ON c.id = a.complex_id
+        WHERE a.article_status = 'active' AND a.trade_type = 'A1'
+          AND a.is_bargain = true
+          AND a.bargain_type IN ('price', 'both')
+          AND a.first_seen_at >= NOW() - INTERVAL '7 days'
+          AND c.property_type = 'APT'
+          AND c.total_households >= 500
+          AND a.deal_price >= $2
+          AND c.city = $1
+      )
+      SELECT id, deal_price, formatted_price, exclusive_space, supply_space,
+        target_floor, total_floor, bargain_score, bargain_keyword,
+        dong_name, direction, description, space_name, bargain_type, first_seen_at,
+        complex_name, complex_id, total_households, division
+      FROM ranked WHERE rn = 1
+      ORDER BY bargain_score DESC
+      LIMIT 10
+    `, [sido, minPrice]);
+    return rows;
+  });
+  res.json(data);
+}
+
 async function handleRegionalTopBargains(req, res) {
-  const pool = getPool();
-  const { sido, sigungu, limit: lim, property_type, price_min, price_max } = req.query;
+  const { sido, sigungu, limit: lim, property_type, price_min, price_max, sort, bargain_type: bt, min_households, min_area, max_area, max_build_year } = req.query;
   if (!sido) return res.status(400).json({ error: 'sido required' });
   const limit = Math.min(parseInt(lim) || 10, 50);
+  const pt = property_type || '';
+  const pmin = price_min || '';
+  const pmax = price_max || '';
+  const sortKey = sort || 'score_desc';
+  const btKey = bt || 'price';
+  const mh = min_households || '';
+  const mia = min_area || '';
+  const mxa = max_area || '';
+  const mby = max_build_year || '';
+  const cacheKey = `regional-top:${sido}:${sigungu || ''}:${limit}:${pt}:${pmin}:${pmax}:${sortKey}:${btKey}:${mh}:${mia}:${mxa}:${mby}`;
 
-  const params = [sido, limit];
-  let idx = 3;
-  let divisionFilter = '';
-  let ptFilter = '';
-  let priceFilter = '';
-  if (sigungu) {
-    const dc = divisionCondition(sigungu, sido, idx);
-    divisionFilter = `AND ${dc.clause}`;
-    params.push(...dc.params);
-    idx = dc.nextIdx;
-  }
-  if (property_type === 'APT' || property_type === 'OPST') {
-    ptFilter = `AND c.property_type = $${idx++}`;
-    params.push(property_type);
-  }
-  if (price_min) {
-    priceFilter += ` AND a.deal_price >= $${idx++}`;
-    params.push(parseInt(price_min));
-  }
-  if (price_max) {
-    priceFilter += ` AND a.deal_price <= $${idx++}`;
-    params.push(parseInt(price_max));
-  }
+  const data = await cached(cacheKey, 120_000, async () => {
+    const pool = getPool();
+    const params = [sido, limit];
+    let idx = 3;
+    let divisionFilter = '';
+    let ptFilter = '';
+    let priceFilter = '';
+    if (sigungu) {
+      const dc = divisionCondition(sigungu, sido, idx);
+      divisionFilter = `AND ${dc.clause}`;
+      params.push(...dc.params);
+      idx = dc.nextIdx;
+    }
+    if (property_type === 'APT' || property_type === 'OPST') {
+      ptFilter = `AND c.property_type = $${idx++}`;
+      params.push(property_type);
+    }
+    if (price_min) {
+      priceFilter += ` AND a.deal_price >= $${idx++}`;
+      params.push(parseInt(price_min));
+    }
+    if (price_max) {
+      priceFilter += ` AND a.deal_price <= $${idx++}`;
+      params.push(parseInt(price_max));
+    }
+    if (min_households) {
+      priceFilter += ` AND c.total_households >= $${idx++}`;
+      params.push(parseInt(min_households));
+    }
+    if (min_area) {
+      priceFilter += ` AND a.exclusive_space >= $${idx++}`;
+      params.push(parseFloat(min_area));
+    }
+    if (max_area) {
+      priceFilter += ` AND a.exclusive_space <= $${idx++}`;
+      params.push(parseFloat(max_area));
+    }
+    if (max_build_year) {
+      priceFilter += ` AND c.approval_elapsed_year <= $${idx++}`;
+      params.push(parseInt(max_build_year));
+    }
 
-  const { rows } = await pool.query(`
-    SELECT a.id, a.deal_price, a.formatted_price, a.exclusive_space,
-      a.target_floor, a.total_floor, a.bargain_score, a.bargain_keyword,
-      a.bargain_type, a.first_seen_at,
-      c.complex_name, c.id AS complex_id, ${MERGED_DIVISION} AS division
-    FROM articles a
-    JOIN complexes c ON c.id = a.complex_id
-    WHERE a.article_status = 'active' AND a.trade_type = 'A1'
-      AND a.is_bargain = true
-      AND a.bargain_type IN ('price', 'both')
-      AND a.first_seen_at >= NOW() - INTERVAL '7 days'
-      AND c.city = $1
-      ${divisionFilter}
-      ${ptFilter}
-      ${priceFilter}
-    ORDER BY a.bargain_score DESC
-    LIMIT $2
-  `, params);
-  res.json(rows);
+    const bargainCond = bargainTypeCondition(bt || 'price');
+    const sortMap = {
+      score_desc: 'a.bargain_score DESC',
+      newest: 'a.first_seen_at DESC',
+      price_asc: 'a.deal_price ASC NULLS LAST',
+      price_desc: 'a.deal_price DESC NULLS LAST',
+    };
+    const orderBy = sortMap[sortKey] || sortMap.score_desc;
+
+    const { rows } = await pool.query(`
+      SELECT a.id, a.deal_price, a.formatted_price, a.exclusive_space,
+        a.supply_space, a.target_floor, a.total_floor, a.bargain_score, a.bargain_keyword,
+        a.bargain_type, a.first_seen_at,
+        a.dong_name, a.direction, a.description, a.space_name,
+        c.complex_name, c.id AS complex_id, ${MERGED_DIVISION} AS division
+      FROM articles a
+      JOIN complexes c ON c.id = a.complex_id
+      WHERE a.article_status = 'active' AND a.trade_type = 'A1'
+        AND ${bargainCond}
+        AND a.first_seen_at >= NOW() - INTERVAL '7 days'
+        AND c.city = $1
+        ${divisionFilter}
+        ${ptFilter}
+        ${priceFilter}
+      ORDER BY ${orderBy}
+      LIMIT $2
+    `, params);
+    return rows;
+  });
+  res.json(data);
 }
 
 async function handleRegionalTopDivisions(req, res) {
-  const pool = getPool();
   const { sido, property_type } = req.query;
   if (!sido) return res.status(400).json({ error: 'sido required' });
+  const pt = property_type || '';
+  const cacheKey = `regional-divs:${sido}:${pt}`;
 
-  const params = [sido];
-  let ptFilter = '';
-  if (property_type === 'APT' || property_type === 'OPST') {
-    ptFilter = `AND c.property_type = $2`;
-    params.push(property_type);
-  }
+  const data = await cached(cacheKey, 120_000, async () => {
+    const pool = getPool();
+    const params = [sido];
+    let ptFilter = '';
+    if (property_type === 'APT' || property_type === 'OPST') {
+      ptFilter = `AND c.property_type = $2`;
+      params.push(property_type);
+    }
 
-  const { rows } = await pool.query(`
-    SELECT ${MERGED_DIVISION} AS division, count(*)::int AS bargain_count
-    FROM articles a
-    JOIN complexes c ON c.id = a.complex_id
-    WHERE a.article_status = 'active' AND a.trade_type = 'A1'
-      AND a.is_bargain = true
-      AND a.bargain_type IN ('price', 'both')
-      AND a.first_seen_at >= NOW() - INTERVAL '7 days'
-      AND c.city = $1
-      ${ptFilter}
-    GROUP BY ${MERGED_DIVISION}
-    ORDER BY bargain_count DESC
-  `, params);
-  res.json(rows);
+    const { rows } = await pool.query(`
+      SELECT ${MERGED_DIVISION} AS division, count(*)::int AS bargain_count
+      FROM articles a
+      JOIN complexes c ON c.id = a.complex_id
+      WHERE a.article_status = 'active' AND a.trade_type = 'A1'
+        AND a.is_bargain = true
+        AND a.bargain_type IN ('price', 'both')
+        AND a.first_seen_at >= NOW() - INTERVAL '7 days'
+        AND c.city = $1
+        ${ptFilter}
+      GROUP BY ${MERGED_DIVISION}
+      ORDER BY bargain_count DESC
+    `, params);
+    return rows;
+  });
+  res.json(data);
 }
 
 // ════════════════════════════════════════

@@ -1,14 +1,16 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { apiFetch } from '../lib/api';
 import type { Briefing } from '../types';
 
-export function useBriefing() {
-  const [data, setData] = useState<Briefing | null>(null);
-  const [loading, setLoading] = useState(true);
+export function useBriefing(initialData?: Briefing | null) {
+  const [data, setData] = useState<Briefing | null>(initialData ?? null);
+  const [loading, setLoading] = useState(!initialData);
+  const skipFirst = useRef(!!initialData);
 
   useEffect(() => {
+    if (skipFirst.current) { skipFirst.current = false; return; }
     apiFetch<Briefing>('/briefing')
       .then(setData)
       .catch(() => setData(null))

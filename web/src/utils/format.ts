@@ -27,6 +27,15 @@ export function formatArea(sqm: number | null | undefined): string {
   return `${sqm}㎡ (${toPyeong(sqm)}평)`;
 }
 
+/** "전용59/공급84㎡ (25평)" — supply가 있으면 둘 다 표시 */
+export function formatAreaFull(exclusive: number | null | undefined, supply: number | null | undefined): string {
+  if (exclusive == null) return '-';
+  if (supply != null && supply > 0) {
+    return `전용${exclusive}/공급${supply}㎡ (${toPyeong(supply)}평)`;
+  }
+  return `${exclusive}㎡ (${toPyeong(exclusive)}평)`;
+}
+
 /** 등록일로부터 경과일 */
 export function daysOnMarket(firstSeenAt: string | null | undefined): number {
   if (!firstSeenAt) return 0;

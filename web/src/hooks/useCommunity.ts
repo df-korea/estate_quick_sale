@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { apiFetch, apiPost, apiDelete } from '../lib/api';
 
 export interface CommunityPost {
@@ -50,12 +50,13 @@ interface PostsResponse {
   limit: number;
 }
 
-export function useCommunityPosts(sort: 'newest' | 'popular' = 'newest') {
-  const [posts, setPosts] = useState<CommunityPost[]>([]);
-  const [loading, setLoading] = useState(true);
+export function useCommunityPosts(sort: 'newest' | 'popular' = 'newest', initialPosts?: CommunityPost[]) {
+  const [posts, setPosts] = useState<CommunityPost[]>(initialPosts || []);
+  const [loading, setLoading] = useState(!initialPosts);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
-  const [total, setTotal] = useState(0);
+  const [total, setTotal] = useState(initialPosts?.length || 0);
+  const skipFirst = useRef(!!initialPosts && sort === 'newest');
 
   const fetch = useCallback(async (pageNum: number, append = false) => {
     setLoading(true);
@@ -70,6 +71,7 @@ export function useCommunityPosts(sort: 'newest' | 'popular' = 'newest') {
   }, [sort]);
 
   useEffect(() => {
+    if (skipFirst.current) { skipFirst.current = false; return; }
     setPage(1);
     fetch(1);
   }, [fetch]);
