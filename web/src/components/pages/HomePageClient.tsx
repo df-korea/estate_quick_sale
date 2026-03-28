@@ -59,6 +59,7 @@ export default function HomePage({ initialBriefing, initialLeaderboard, initialT
   const carouselRef = useRef<HTMLDivElement>(null);
   const { ref: dragCarouselRef } = useDragScroll<HTMLDivElement>();
   const { ref: dragSidoRef } = useDragScroll<HTMLDivElement>();
+  const [activeCardIndex, setActiveCardIndex] = useState(0);
 
   const setCarouselRef = useCallback((node: HTMLDivElement | null) => {
     carouselRef.current = node;
@@ -67,7 +68,20 @@ export default function HomePage({ initialBriefing, initialLeaderboard, initialT
 
   useEffect(() => {
     carouselRef.current?.scrollTo({ left: 0, behavior: 'smooth' });
+    setActiveCardIndex(0);
   }, [activeSido]);
+
+  // Track scroll position to update active dot
+  useEffect(() => {
+    const el = carouselRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      const idx = Math.round(el.scrollLeft / 292);
+      setActiveCardIndex(idx);
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, [weeklyBargains]);
 
   // Prefetch article pages for carousel items
   useEffect(() => {
@@ -139,8 +153,8 @@ export default function HomePage({ initialBriefing, initialLeaderboard, initialT
         {/* Weekly Featured Bargains */}
         <section className="section animate-fade-in-up stagger-2">
           <div className="flex items-center gap-8" style={{ margin: '0 0 8px' }}>
-            <h3 style={{ fontWeight: 700, fontSize: 16, margin: 0 }}>이번 주 추천 급매</h3>
-            <span className="text-xs text-gray">최근 7일 기준</span>
+            <h3 style={{ fontWeight: 700, fontSize: 16, margin: 0 }}>오늘 추천 급매</h3>
+            <span className="text-xs text-gray">최근 24시간 기준</span>
           </div>
 
           {/* Sido tabs */}
@@ -159,6 +173,7 @@ export default function HomePage({ initialBriefing, initialLeaderboard, initialT
 
           {/* Carousel */}
           {weeklyLoading ? <LoadingSpinner /> : weeklyBargains.length > 0 ? (
+            <>
             <div
               ref={setCarouselRef}
               style={{
@@ -248,9 +263,56 @@ export default function HomePage({ initialBriefing, initialLeaderboard, initialT
                 </div>
               ))}
             </div>
+            {/* Dot indicator with arrows */}
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              gap: 6, marginTop: 10,
+            }}>
+              <button
+                aria-label="이전"
+                onClick={() => {
+                  const next = Math.max(0, activeCardIndex - 1);
+                  carouselRef.current?.scrollTo({ left: next * 292, behavior: 'smooth' });
+                }}
+                style={{
+                  width: 28, height: 28, borderRadius: '50%', border: '1px solid var(--border)',
+                  background: 'var(--white)', cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 14, color: 'var(--gray-500)',
+                }}
+              >‹</button>
+              {weeklyBargains.map((_, i) => (
+                <span
+                  key={i}
+                  onClick={() => carouselRef.current?.scrollTo({ left: i * 292, behavior: 'smooth' })}
+                  style={{
+                    width: activeCardIndex === i ? 16 : 6,
+                    height: 6,
+                    borderRadius: 3,
+                    background: activeCardIndex === i ? 'var(--blue-500)' : 'var(--gray-200)',
+                    transition: 'all 0.2s',
+                    cursor: 'pointer',
+                  }}
+                />
+              ))}
+              <button
+                aria-label="다음"
+                onClick={() => {
+                  const next = Math.min(weeklyBargains.length - 1, activeCardIndex + 1);
+                  carouselRef.current?.scrollTo({ left: next * 292, behavior: 'smooth' });
+                }}
+                style={{
+                  width: 28, height: 28, borderRadius: '50%', border: '1px solid var(--border)',
+                  background: 'var(--white)', cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 14, color: 'var(--gray-500)',
+                }}
+              >›</button>
+            </div>
+            </>
           ) : (
             <div className="text-sm text-gray" style={{ padding: 'var(--space-16)', textAlign: 'center' }}>
-              해당 지역에 이번 주 급매가 없습니다
+              해당 지역에 오늘 급매가 없습니다
             </div>
           )}
         </section>

@@ -20,6 +20,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     return {
       title,
       description,
+      robots: { index: false, follow: false },
       openGraph: {
         title: `${title} | 부동산 급매 레이더`,
         description,

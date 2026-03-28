@@ -4,9 +4,9 @@ import { useEffect, useState } from 'react';
 import { apiFetch } from '../lib/api';
 import type { SidoHeatmapItem, SigunguHeatmapItem, SigunguComplex, BargainMode, PropertyType } from '../types';
 
-export function useSidoHeatmap(bargainType?: BargainMode, propertyType?: PropertyType) {
-  const [data, setData] = useState<SidoHeatmapItem[]>([]);
-  const [loading, setLoading] = useState(true);
+export function useSidoHeatmap(bargainType?: BargainMode, propertyType?: PropertyType, initialData?: SidoHeatmapItem[]) {
+  const [data, setData] = useState<SidoHeatmapItem[]>(initialData || []);
+  const [loading, setLoading] = useState(!initialData);
 
   useEffect(() => {
     setLoading(true);
@@ -16,7 +16,7 @@ export function useSidoHeatmap(bargainType?: BargainMode, propertyType?: Propert
     const qsStr = qs.toString();
     apiFetch<SidoHeatmapItem[]>(`/map/sido-heatmap${qsStr ? `?${qsStr}` : ''}`)
       .then(setData)
-      .catch(() => setData([]))
+      .catch(() => { if (!initialData) setData([]); })
       .finally(() => setLoading(false));
   }, [bargainType, propertyType]);
 

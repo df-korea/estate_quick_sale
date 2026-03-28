@@ -15,14 +15,14 @@ export interface PopularComplex {
   view_count: number;
 }
 
-export function usePopularComplexes() {
-  const [data, setData] = useState<PopularComplex[]>([]);
-  const [loading, setLoading] = useState(true);
+export function usePopularComplexes(initialData?: PopularComplex[]) {
+  const [data, setData] = useState<PopularComplex[]>(initialData || []);
+  const [loading, setLoading] = useState(!initialData);
 
   useEffect(() => {
     apiFetch<PopularComplex[]>('/complexes/popular')
       .then(setData)
-      .catch(() => setData([]))
+      .catch(() => { if (!initialData) setData([]); })
       .finally(() => setLoading(false));
   }, []);
 

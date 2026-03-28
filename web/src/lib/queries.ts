@@ -247,6 +247,228 @@ export async function getDongRankings(limit = 10, bargainType = 'keyword') {
   return rows;
 }
 
+export async function getPopularComplexes() {
+  const pool = getPool();
+  const { rows } = await pool.query(`
+    SELECT c.id, c.complex_name, c.property_type, c.total_households,
+      c.deal_count, c.lease_count, c.rent_count,
+      count(*)::int AS view_count
+    FROM complex_views cv
+    JOIN complexes c ON c.id = cv.complex_id
+    WHERE cv.viewed_at >= NOW() - INTERVAL '7 days'
+    GROUP BY c.id
+    ORDER BY count(*) DESC
+    LIMIT 10
+  `);
+  return rows;
+}
+
+export async function getSidoList() {
+  const pool = getPool();
+  const { rows } = await pool.query(`
+    SELECT c.city AS sido_name,
+      COALESCE(sum(ca.total_articles), 0)::int AS total_articles,
+      COALESCE(sum(ca.bargain_count), 0)::int AS bargain_count
+    FROM complexes c
+    LEFT JOIN (
+      SELECT complex_id,
+        count(*) AS total_articles,
+        count(*) FILTER (WHERE is_bargain = true) AS bargain_count
+      FROM articles
+      WHERE trade_type = 'A1' AND article_status = 'active'
+      GROUP BY complex_id
+    ) ca ON ca.complex_id = c.id
+    WHERE c.is_active = true AND c.city IS NOT NULL
+    GROUP BY c.city
+    ORDER BY sum(ca.bargain_count) DESC NULLS LAST
+  `);
+  return rows;
+}
+
+export async function getRegionalTopBargains(sido: string, limit = 10) {
+  const pool = getPool();
+  const { rows } = await pool.query(`
+    SELECT a.id, a.deal_price, a.formatted_price, a.exclusive_space,
+      a.supply_space, a.target_floor, a.total_floor, a.bargain_score, a.bargain_keyword,
+      a.bargain_type, a.first_seen_at,
+      a.dong_name, a.direction, a.description, a.space_name,
+      c.complex_name, c.id AS complex_id, c.division
+    FROM articles a
+    JOIN complexes c ON c.id = a.complex_id
+    WHERE a.article_status = 'active' AND a.trade_type = 'A1'
+      AND (a.bargain_score >= 60 AND a.bargain_type IN ('price', 'both'))
+      AND a.first_seen_at >= NOW() - INTERVAL '7 days'
+      AND c.city = $1
+    ORDER BY a.bargain_score DESC
+    LIMIT $2
+  `, [sido, limit]);
+  return rows;
+}
+
+// ── Article detail SSR helpers ──
+
+const CANCEL_FILTER = `(cdeal_type IS NULL OR cdeal_type = '' OR cdeal_type != 'O')`;
+
+export async function getArticlePriceHistory(articleId: number) {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `SELECT id, deal_price, formatted_price, source, modified_date, recorded_at
+     FROM price_history WHERE article_id=$1 ORDER BY recorded_at ASC`,
+    [articleId]
+  );
+  return rows;
+}
+
+export async function getArticleAssessment(articleId: number) {
+  const pool = getPool();
+
+  const { rows: [article] } = await pool.query(`
+    SELECT a.id, a.deal_price, a.exclusive_space, a.first_seen_at, a.is_bargain,
+      a.bargain_keyword, a.complex_id, c.complex_name, c.sgg_cd, c.rt_apt_nm
+    FROM articles a JOIN complexes c ON a.complex_id = c.id
+    WHERE a.id = $1
+  `, [articleId]);
+  if (!article) return null;
+
+  const area = parseFloat(article.exclusive_space) || 0;
+
+  const [{ rows: [complexStats] }, { rows: [txStats] }, { rows: [dropStats] }, { rows: [magStats] }] = await Promise.all([
+    pool.query(`
+      SELECT count(*)::int AS count,
+        round(avg(deal_price))::bigint AS avg_price,
+        min(deal_price) AS min_price,
+        max(deal_price) AS max_price
+      FROM articles
+      WHERE complex_id = $1 AND trade_type = 'A1' AND article_status = 'active'
+        AND deal_price > 0
+        AND exclusive_space BETWEEN $2::numeric - 3 AND $2::numeric + 3
+        AND id != $3
+    `, [article.complex_id, area, article.id]),
+    pool.query(`
+      SELECT count(*)::int AS tx_count,
+        round(avg(deal_amount))::bigint AS avg_tx_price
+      FROM (
+        SELECT deal_amount,
+          ROW_NUMBER() OVER (ORDER BY deal_year DESC, deal_month DESC, deal_day DESC NULLS LAST) AS rn
+        FROM real_transactions
+        WHERE complex_id = $1
+          AND exclu_use_ar BETWEEN $2::numeric - 3 AND $2::numeric + 3
+          AND ${CANCEL_FILTER}
+      ) sub WHERE rn <= 5
+    `, [article.complex_id, area]),
+    pool.query(`
+      SELECT count(*)::int AS drop_count FROM (
+        SELECT deal_price, lag(deal_price) OVER (ORDER BY recorded_at) AS prev_price
+        FROM price_history WHERE article_id = $1
+      ) sub WHERE prev_price IS NOT NULL AND deal_price < prev_price
+    `, [article.id]),
+    pool.query(`
+      SELECT CASE WHEN a.deal_price < ph.initial_price
+        THEN round((1 - a.deal_price::numeric / ph.initial_price) * 100, 1) ELSE 0 END AS drop_pct
+      FROM articles a, (
+        SELECT deal_price AS initial_price FROM price_history WHERE article_id = $1 ORDER BY recorded_at ASC LIMIT 1
+      ) ph WHERE a.id = $1
+    `, [article.id]),
+  ]);
+
+  let score = 0;
+  const factors: { name: string; value: number }[] = [];
+  const price = Number(article.deal_price);
+
+  const avgPrice = Number(complexStats?.avg_price);
+  let discountVsComplex: number | null = null;
+  if (avgPrice && price && avgPrice > 0) {
+    discountVsComplex = ((price - avgPrice) / avgPrice) * 100;
+    if (price < avgPrice && complexStats.count >= 2) {
+      const complexScore = Math.min(Math.round((1.0 - price / avgPrice) / 0.005), 40);
+      score += complexScore;
+      factors.push({ name: `단지 대비 ${Math.abs(Math.round(discountVsComplex * 10) / 10)}% 저렴`, value: complexScore });
+    }
+  }
+
+  let discountVsTx: number | null = null;
+  const txAvgWon = txStats?.avg_tx_price ? Number(txStats.avg_tx_price) * 10000 : null;
+  if (txAvgWon && price && txAvgWon > 0) {
+    discountVsTx = ((price - txAvgWon) / txAvgWon) * 100;
+    if (price < txAvgWon) {
+      const txScore = Math.min(Math.round((1.0 - price / txAvgWon) / 0.005), 40);
+      score += txScore;
+      factors.push({ name: `실거래 대비 ${Math.abs(Math.round(discountVsTx * 10) / 10)}% 저렴`, value: txScore });
+    }
+  }
+
+  const dropCount = dropStats?.drop_count || 0;
+  if (dropCount >= 1) {
+    const dropScore = Math.min(dropCount * 2, 10);
+    score += dropScore;
+    factors.push({ name: `가격 ${dropCount}회 인하`, value: dropScore });
+  }
+
+  const dropPct = magStats?.drop_pct || 0;
+  if (dropPct > 0) {
+    const magScore = Math.min(Math.round(dropPct / 2.0), 10);
+    score += magScore;
+    factors.push({ name: `누적 ${dropPct}% 인하`, value: magScore });
+  }
+
+  const daysOnMarket = Math.floor((Date.now() - new Date(article.first_seen_at).getTime()) / 86400000);
+  const isLowest = complexStats?.min_price && price && price <= Number(complexStats.min_price);
+
+  return {
+    score: Math.min(score, 100),
+    factors,
+    discount_vs_complex: discountVsComplex ? Math.round(discountVsComplex * 10) / 10 : null,
+    discount_vs_transaction: discountVsTx ? Math.round(discountVsTx * 10) / 10 : null,
+    complex_avg_price: avgPrice,
+    complex_listing_count: complexStats?.count || 0,
+    tx_avg_price: txAvgWon || null,
+    tx_count: txStats?.tx_count || 0,
+    days_on_market: daysOnMarket,
+    price_change_count: dropCount,
+    is_lowest_in_complex: !!isLowest,
+  };
+}
+
+export async function getArticleRealTransactions(complexId: number, exclusiveSpace: number, months = 12) {
+  const pool = getPool();
+  const area = parseFloat(String(exclusiveSpace)) || 0;
+  const now = new Date();
+  const from = new Date(now.getFullYear(), now.getMonth() - months, 1);
+  const fromYm = from.getFullYear() * 100 + (from.getMonth() + 1);
+
+  const [trendResult, individualResult] = await Promise.all([
+    pool.query(`
+      SELECT
+        deal_year || '-' || lpad(deal_month::text, 2, '0') AS month,
+        count(*)::int AS tx_count,
+        round(avg(deal_amount))::bigint AS avg_price,
+        min(deal_amount) AS min_price,
+        max(deal_amount) AS max_price,
+        round(avg(deal_amount / NULLIF(exclu_use_ar, 0) * 3.3058))::bigint AS avg_price_per_pyeong
+      FROM real_transactions
+      WHERE complex_id = $1
+        AND exclu_use_ar BETWEEN $2::numeric - 2 AND $2::numeric + 2
+        AND (deal_year * 100 + deal_month) >= $3
+        AND ${CANCEL_FILTER}
+      GROUP BY deal_year, deal_month
+      ORDER BY deal_year, deal_month
+    `, [complexId, area, fromYm]),
+    pool.query(`
+      SELECT deal_year, deal_month, deal_day,
+        deal_amount, floor, exclu_use_ar,
+        CASE WHEN cdeal_type = 'O' THEN true ELSE false END AS is_cancel
+      FROM real_transactions
+      WHERE complex_id = $1
+        AND exclu_use_ar BETWEEN $2::numeric - 2 AND $2::numeric + 2
+        AND (deal_year * 100 + deal_month) >= $3
+      ORDER BY deal_year DESC, deal_month DESC, deal_day DESC NULLS LAST
+      LIMIT 100
+    `, [complexId, area, fromYm]),
+  ]);
+
+  return { trend: trendResult.rows, transactions: individualResult.rows };
+}
+
 export async function getCommunityPost(id: number) {
   const pool = getPool();
   const { rows } = await pool.query(`

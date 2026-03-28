@@ -21,7 +21,6 @@ async function buildSitemap(): Promise<string> {
   // 1. Static pages (6개)
   urls.push(entry(BASE, today, 'daily', '1.0'));
   urls.push(entry(`${BASE}/search`, today, 'daily', '0.8'));
-  urls.push(entry(`${BASE}/community`, today, 'daily', '0.7'));
   urls.push(entry(`${BASE}/about`, today, 'monthly', '0.5'));
   urls.push(entry(`${BASE}/terms`, today, 'monthly', '0.3'));
   urls.push(entry(`${BASE}/privacy`, today, 'monthly', '0.3'));
@@ -42,29 +41,19 @@ async function buildSitemap(): Promise<string> {
     }
   } catch { /* fallback */ }
 
-  // 3. Price bargain articles: 가격급매 매물 (~6,528개)
+  // 3. High-quality bargain articles: 급매점수 50 초과 매물만
   try {
     const { rows } = await pool.query(`
       SELECT a.id, a.first_seen_at
       FROM articles a
       WHERE a.article_status = 'active'
-        AND a.bargain_type IN ('price', 'both')
+        AND a.bargain_score > 50
       ORDER BY a.bargain_score DESC, a.first_seen_at DESC
+      LIMIT 5000
     `);
     for (const r of rows) {
       const date = new Date(r.first_seen_at).toISOString().split('T')[0];
       urls.push(entry(`${BASE}/article/${r.id}`, date, 'daily', '0.6'));
-    }
-  } catch { /* fallback */ }
-
-  // 4. Community posts
-  try {
-    const { rows } = await pool.query(`
-      SELECT id, created_at FROM community_posts ORDER BY created_at DESC LIMIT 500
-    `);
-    for (const r of rows) {
-      const date = new Date(r.created_at).toISOString().split('T')[0];
-      urls.push(entry(`${BASE}/community/${r.id}`, date, 'weekly', '0.4'));
     }
   } catch { /* fallback */ }
 

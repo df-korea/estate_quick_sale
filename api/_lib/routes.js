@@ -1861,7 +1861,7 @@ async function handleCommunityUnlike(req, res) {
 async function handleWeeklyFeaturedBargains(req, res) {
   const { sido } = req.query;
   if (!sido) return res.status(400).json({ error: 'sido required' });
-  const cacheKey = `weekly-featured:${sido}`;
+  const cacheKey = `today-featured:${sido}`;
 
   const data = await cached(cacheKey, 120_000, async () => {
     const pool = getPool();
@@ -1882,7 +1882,7 @@ async function handleWeeklyFeaturedBargains(req, res) {
         WHERE a.article_status = 'active' AND a.trade_type = 'A1'
           AND a.is_bargain = true
           AND a.bargain_type IN ('price', 'both')
-          AND a.first_seen_at >= NOW() - INTERVAL '7 days'
+          AND a.first_seen_at >= NOW() - INTERVAL '24 hours'
           AND c.property_type = 'APT'
           AND c.total_households >= 500
           AND a.deal_price >= $2

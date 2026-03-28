@@ -75,9 +75,10 @@ export function useRegionalTopBargains(
   sido: string | null, sigungu: string | null, limit = 10,
   propertyType?: string, priceMin?: number | null, priceMax?: number | null,
   sort?: string, bargainType?: string,
-  minHouseholds?: number | null, minArea?: number | null, maxArea?: number | null, maxBuildYear?: number | null
+  minHouseholds?: number | null, minArea?: number | null, maxArea?: number | null, maxBuildYear?: number | null,
+  initialData?: BargainArticle[]
 ) {
-  const [data, setData] = useState<BargainArticle[]>([]);
+  const [data, setData] = useState<BargainArticle[]>(initialData || []);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {

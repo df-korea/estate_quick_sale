@@ -22,12 +22,14 @@ export function useArticle(id: string | undefined, initialData?: ArticleDetail |
   return { data, loading };
 }
 
-export function usePriceHistory(id: string | undefined) {
-  const [data, setData] = useState<PriceHistoryEntry[]>([]);
-  const [loading, setLoading] = useState(true);
+export function usePriceHistory(id: string | undefined, initialData?: PriceHistoryEntry[]) {
+  const [data, setData] = useState<PriceHistoryEntry[]>(initialData ?? []);
+  const [loading, setLoading] = useState(!initialData);
+  const skipFirst = useRef(!!initialData);
 
   useEffect(() => {
     if (!id) return;
+    if (skipFirst.current) { skipFirst.current = false; return; }
     setLoading(true);
     apiFetch<PriceHistoryEntry[]>(`/articles/${id}/price-history`)
       .then(setData)

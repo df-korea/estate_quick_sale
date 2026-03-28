@@ -15,16 +15,22 @@ import RegionalBargainRow from '@/components/RegionalBargainRow';
 import DualRangeSlider from '@/components/DualRangeSlider';
 import InlineBannerAd from '@/components/InlineBannerAd';
 
-export default function SearchPage() {
+interface SearchPageProps {
+  initialPopularComplexes?: any[];
+  initialSidoList?: any[];
+  initialRegionalBargains?: any[];
+}
+
+export default function SearchPage({ initialPopularComplexes, initialSidoList, initialRegionalBargains }: SearchPageProps = {}) {
   const [query, setQuery] = useState('');
   const [inputFocused, setInputFocused] = useState(false);
   const { results, loading } = useComplexSearch(query);
-  const { data: popularComplexes, loading: popularLoading } = usePopularComplexes();
+  const { data: popularComplexes, loading: popularLoading } = usePopularComplexes(initialPopularComplexes);
   const { data: watchlistData, loading: watchlistLoading } = useWatchlist();
   const nav = useRouter();
 
   // Regional TOP10 state
-  const { data: sidoHeatmap } = useSidoHeatmap();
+  const { data: sidoHeatmap } = useSidoHeatmap(undefined, undefined, initialSidoList);
   const sidoList = useMemo(() =>
     [...sidoHeatmap.map(s => s.sido_name).filter(Boolean)].sort((a, b) => {
       const aa = abbreviateCity(a), bb = abbreviateCity(b);
@@ -54,7 +60,7 @@ export default function SearchPage() {
   const divisions = [...divisionsRaw].sort((a, b) => a.division.localeCompare(b.division, 'ko'));
   const { data: regionalBargains, loading: regionalLoading } = useRegionalTopBargains(
     activeSido, selectedSigungu, 10, regionalPropertyType, priceMin, priceMax, bargainSort, bargainType,
-    minHouseholds, minArea, maxArea, maxBuildYear
+    minHouseholds, minArea, maxArea, maxBuildYear, initialRegionalBargains
   );
 
   // Count active filters (excluding defaults)

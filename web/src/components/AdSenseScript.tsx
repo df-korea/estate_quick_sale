@@ -3,12 +3,13 @@
 import { usePathname } from 'next/navigation';
 import Script from 'next/script';
 
-const NO_ADS_PAGES = ['/watchlist', '/settings', '/settings/notifications', '/community/write'];
+const NO_ADS_PAGES = ['/watchlist', '/settings', '/settings/notifications'];
+const NO_ADS_PREFIXES = ['/community'];
 
 export default function AdSenseScript() {
   const pathname = usePathname();
 
-  if (NO_ADS_PAGES.includes(pathname)) {
+  if (NO_ADS_PAGES.includes(pathname) || NO_ADS_PREFIXES.some(p => pathname.startsWith(p))) {
     return null;
   }
 

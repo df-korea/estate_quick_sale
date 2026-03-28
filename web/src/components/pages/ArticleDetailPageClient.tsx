@@ -16,14 +16,18 @@ import InlineBannerAd from '@/components/InlineBannerAd';
 
 interface ArticleDetailProps {
   initialArticle?: any;
+  initialAssessment?: any;
+  initialPriceHistory?: any[];
+  initialTrend?: any[];
+  initialTransactions?: any[];
 }
 
-export default function ArticleDetailPage({ initialArticle }: ArticleDetailProps = {}) {
+export default function ArticleDetailPage({ initialArticle, initialAssessment, initialPriceHistory, initialTrend, initialTransactions }: ArticleDetailProps = {}) {
   const { id } = useParams<{ id: string }>();
   const nav = useRouter();
   const { data: article, loading } = useArticle(id, initialArticle);
-  const { data: history } = usePriceHistory(id);
-  const { data: assessment } = useAssessment(id);
+  const { data: history } = usePriceHistory(id, initialPriceHistory);
+  const { data: assessment } = useAssessment(id, initialAssessment);
   const assessmentRef = useRef<HTMLDivElement>(null);
 
   if (loading) return <div className="page"><LoadingSpinner /></div>;
@@ -116,6 +120,8 @@ export default function ArticleDetailPage({ initialArticle }: ArticleDetailProps
             exclusiveSpace={article.exclusive_space}
             sggCd={article.complexes.sgg_cd}
             complexId={article.complex_id}
+            initialTrend={initialTrend}
+            initialTransactions={initialTransactions}
           />
         )}
 
@@ -165,10 +171,10 @@ const TIMEFRAMES = [
   { label: '최대', months: 120 },
 ] as const;
 
-function RealTransactionSection({ complexName, exclusiveSpace, sggCd, complexId }: { complexName: string; exclusiveSpace: number; sggCd?: string | null; complexId?: number }) {
+function RealTransactionSection({ complexName, exclusiveSpace, sggCd, complexId, initialTrend, initialTransactions }: { complexName: string; exclusiveSpace: number; sggCd?: string | null; complexId?: number; initialTrend?: any[]; initialTransactions?: any[] }) {
   const [months, setMonths] = useState(12);
-  const { data: trend, loading: trendLoading } = usePriceTrend({ aptNm: complexName, excluUseAr: exclusiveSpace, sggCd: sggCd || undefined, months, complexId });
-  const { data: individualTxs, loading: txLoading } = useIndividualTransactions({ aptNm: complexName, excluUseAr: exclusiveSpace, sggCd: sggCd || undefined, months, complexId });
+  const { data: trend, loading: trendLoading } = usePriceTrend({ aptNm: complexName, excluUseAr: exclusiveSpace, sggCd: sggCd || undefined, months, complexId, initialData: months === 12 ? initialTrend : undefined });
+  const { data: individualTxs, loading: txLoading } = useIndividualTransactions({ aptNm: complexName, excluUseAr: exclusiveSpace, sggCd: sggCd || undefined, months, complexId, initialData: months === 12 ? initialTransactions : undefined });
 
   const loading = trendLoading || txLoading;
   if (loading) return <div style={{ marginBottom: 'var(--space-16)' }}><LoadingSpinner /></div>;

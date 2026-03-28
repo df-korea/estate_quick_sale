@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
-import { getArticleById } from '@/lib/queries';
+import { notFound } from 'next/navigation';
+import { getArticleById, getArticleAssessment, getArticlePriceHistory, getArticleRealTransactions } from '@/lib/queries';
 import { cached } from '@api/_lib/cache.js';
 import ArticleDetailPageClient from '@/components/pages/ArticleDetailPageClient';
 
@@ -39,6 +40,28 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function ArticleDetailPage({ params }: Props) {
   const { id } = await params;
-  const article = await getArticleCached(Number(id)).catch(() => null);
-  return <ArticleDetailPageClient initialArticle={article} />;
+  const numId = Number(id);
+  const article = await getArticleCached(numId).catch(() => null);
+  if (!article) notFound();
+
+  // Fetch assessment, price history, and real transactions in parallel for SSR
+  const [assessment, priceHistory, realTx] = await Promise.all([
+    cached(`ssr:assessment:${numId}`, 300_000, () => getArticleAssessment(numId)).catch(() => null),
+    cached(`ssr:price-history:${numId}`, 300_000, () => getArticlePriceHistory(numId)).catch(() => []),
+    article.trade_type === 'A1'
+      ? cached(`ssr:real-tx:${article.complex_id}:${article.exclusive_space}`, 300_000,
+          () => getArticleRealTransactions(article.complex_id, article.exclusive_space, 12)
+        ).catch(() => ({ trend: [], transactions: [] }))
+      : Promise.resolve({ trend: [], transactions: [] }),
+  ]);
+
+  return (
+    <ArticleDetailPageClient
+      initialArticle={article}
+      initialAssessment={assessment}
+      initialPriceHistory={priceHistory}
+      initialTrend={realTx.trend}
+      initialTransactions={realTx.transactions}
+    />
+  );
 }

@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { notFound } from 'next/navigation';
 import { getComplexById } from '@/lib/queries';
 import { cached } from '@api/_lib/cache.js';
 import ComplexDetailPageClient from '@/components/pages/ComplexDetailPageClient';
@@ -38,5 +39,6 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 export default async function ComplexDetailPage({ params }: Props) {
   const { id } = await params;
   const complex = await getComplexCached(Number(id)).catch(() => null);
+  if (!complex) notFound();
   return <ComplexDetailPageClient initialComplex={complex} />;
 }
