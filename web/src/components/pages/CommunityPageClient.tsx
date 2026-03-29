@@ -4,10 +4,10 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useCommunityPosts } from '@/hooks/useCommunity';
 import { getAuthToken } from '@/hooks/useAuth';
-import { isTossWebView } from '@/lib/env';
 import CommunityPostCard from '@/components/CommunityPostCard';
 import LoadingSpinner from '@/components/LoadingSpinner';
 import InlineBannerAd from '@/components/InlineBannerAd';
+import LoginModal from '@/components/LoginModal';
 
 interface CommunityPageProps {
   initialPosts?: any[];
@@ -18,6 +18,7 @@ export default function CommunityPage({ initialPosts }: CommunityPageProps = {})
   const [sort, setSort] = useState<'newest' | 'popular'>('newest');
   const { posts, loading, hasMore, loadMore, total } = useCommunityPosts(sort, initialPosts);
   const observerRef = useRef<HTMLDivElement>(null);
+  const [showLogin, setShowLogin] = useState(false);
 
   // Infinite scroll
   const handleObserver = useCallback((entries: IntersectionObserverEntry[]) => {
@@ -35,56 +36,33 @@ export default function CommunityPage({ initialPosts }: CommunityPageProps = {})
   }, [handleObserver]);
 
   const isLoggedIn = !!getAuthToken();
-  const isToss = isTossWebView();
 
-  // Web user (not logged in + not Toss) → show info card
-  if (!isLoggedIn && !isToss) {
-    return (
-      <div className="page">
-        <div className="page-header glass"><h1>게시판</h1></div>
-        <div className="page-content">
-          <div style={{
-            background: 'linear-gradient(135deg, #3182f6, #1b64da)',
-            borderRadius: 'var(--radius-lg)',
-            padding: '32px 24px',
-            textAlign: 'center',
-            color: 'white',
-            margin: '20px 0',
-            boxShadow: '0 4px 16px rgba(49, 130, 246, 0.3)',
-          }}>
-            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.5" style={{ margin: '0 auto 12px', display: 'block' }}>
-              <rect x="5" y="2" width="14" height="20" rx="2" ry="2" />
-              <line x1="12" y1="18" x2="12" y2="18" strokeLinecap="round" strokeWidth="2" />
-            </svg>
-            <h3 style={{ fontSize: 18, fontWeight: 700, margin: '0 0 8px' }}>게시판은 토스 미니앱에서!</h3>
-            <p style={{ fontSize: 14, opacity: 0.9, margin: '0 0 12px' }}>토스 미니앱에서 다른 사용자들과 급매 정보를 나눠보세요.</p>
-            <p style={{ fontSize: 13, opacity: 0.6, margin: 0 }}>현재 토스 미니앱 출시 준비중입니다.</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const handleWrite = () => {
+    if (isLoggedIn) {
+      nav.push('/community/write');
+    } else {
+      setShowLogin(true);
+    }
+  };
 
   return (
     <div className="page">
       <div className="page-header glass">
         <h1>게시판</h1>
-        {isLoggedIn && (
-          <button
-            onClick={() => nav.push('/community/write')}
-            className="press-effect"
-            style={{
-              padding: '6px 14px',
-              background: 'var(--blue-500)',
-              color: 'white',
-              borderRadius: 'var(--radius-full)',
-              fontSize: 13,
-              fontWeight: 600,
-            }}
-          >
-            글쓰기
-          </button>
-        )}
+        <button
+          onClick={handleWrite}
+          className="press-effect"
+          style={{
+            padding: '6px 14px',
+            background: 'var(--blue-500)',
+            color: 'white',
+            borderRadius: 'var(--radius-full)',
+            fontSize: 13,
+            fontWeight: 600,
+          }}
+        >
+          글쓰기
+        </button>
       </div>
 
       <div className="page-content">
@@ -127,6 +105,12 @@ export default function CommunityPage({ initialPosts }: CommunityPageProps = {})
           </div>
         )}
       </div>
+
+      <LoginModal
+        open={showLogin}
+        onClose={() => setShowLogin(false)}
+        onLoginSuccess={() => nav.push('/community/write')}
+      />
     </div>
   );
 }

@@ -9,6 +9,7 @@ interface AuthUser {
   userId: number;
   userKey: string;
   nickname: string | null;
+  authProvider?: 'toss' | 'kakao' | 'anonymous';
 }
 
 interface AuthContextValue {
@@ -72,11 +73,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [token]);
 
   const login = useCallback(async () => {
-    // Web version: Toss login is not available outside the Toss app.
-    // This is a no-op on the web; auth is Toss-only.
+    // Web: login is handled by LoginModal (Kakao/Anonymous)
+    // This is a no-op; kept for interface compatibility
     setLoading(true);
     try {
-      throw new Error('Toss 앱에서만 로그인할 수 있습니다.');
+      throw new Error('LoginModal을 사용하세요');
     } finally {
       setLoading(false);
     }

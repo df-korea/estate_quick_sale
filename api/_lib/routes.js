@@ -109,6 +109,10 @@ const routes = [
   { m: 'GET', p: '/real-transactions/region-compare', h: handleRealTxRegionCompare },
   { m: 'GET', p: '/real-transactions/volume-trend', h: handleRealTxVolumeTrend },
   { m: 'GET', p: '/real-transactions/listing-vs-actual', h: handleRealTxListingVsActual },
+  { m: 'GET', p: '/real-transactions/change-rate/sido', h: handleRtChangeRateSido },
+  { m: 'GET', p: '/real-transactions/change-rate/sigungu', h: handleRtChangeRateSigungu },
+  { m: 'GET', p: '/real-transactions/change-rate/complex', h: handleRtChangeRateComplex },
+  { m: 'GET', p: '/real-transactions/weekly', h: handleRtWeekly },
   { m: 'GET', p: '/real-transactions', h: handleRealTransactions },
 
   // Analysis
@@ -1729,14 +1733,15 @@ async function handleCommunityCreatePost(req, res) {
   if (!title?.trim() || !content?.trim()) {
     return res.status(400).json({ error: 'title and content required' });
   }
-  const { rows: [u] } = await pool.query(`SELECT nickname FROM users WHERE id = $1`, [user.userId]);
+  const { rows: [u] } = await pool.query(`SELECT nickname, auth_provider FROM users WHERE id = $1`, [user.userId]);
+  const isAnon = user.authProvider === 'anonymous' || u?.auth_provider === 'anonymous';
   const nickname = u?.nickname || '익명';
 
   const { rows } = await pool.query(`
-    INSERT INTO community_posts (title, content, nickname, attached_article_id, user_id)
-    VALUES ($1, $2, $3, $4, $5)
+    INSERT INTO community_posts (title, content, nickname, attached_article_id, user_id, is_anonymous, anonymous_nickname)
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
     RETURNING *
-  `, [title.trim(), content.trim(), nickname, attached_article_id || null, user.userId]);
+  `, [title.trim(), content.trim(), nickname, attached_article_id || null, user.userId, isAnon, isAnon ? nickname : null]);
   res.status(201).json(rows[0]);
 }
 
@@ -2149,4 +2154,244 @@ async function handlePutNotificationSettings(req, res) {
     notify_new_article ?? true,
   ]);
   res.json(rows[0]);
+}
+
+// ── Real Transaction Change Rate APIs ──
+// 시도/시군구: KB부동산 가격지수 (kb_price_index 테이블)
+// 단지별: 실거래 평당가 중위값 비교
+
+const PERIOD_DAYS = { '1w': 7, '2w': 14, '1m': 30, '3m': 90, '6m': 180, '1y': 365 };
+
+// KB 지역명 → 우리 DB city명 매핑
+const KB_TO_DB_CITY = {
+  '서울': '서울시', '부산': '부산시', '대구': '대구시', '인천': '인천시',
+  '광주': '광주시', '대전': '대전시', '울산': '울산시', '세종': '세종시',
+  '경기': '경기도', '강원': '강원도', '충북': '충청북도', '충남': '충청남도',
+  '전북': '전북도', '전남': '전라남도', '경북': '경상북도', '경남': '경상남도',
+  '제주': '제주도',
+};
+const DB_CITY_TO_KB_CODE = {
+  '서울시': '1100000000', '부산시': '2600000000', '대구시': '2700000000',
+  '인천시': '2800000000', '광주시': '2900000000', '대전시': '3000000000',
+  '울산시': '3100000000', '세종시': '3600000000', '경기도': '4100000000',
+  '충청북도': '4300000000', '충청남도': '4400000000', '전라남도': '4600000000',
+  '경상북도': '4700000000', '경상남도': '4800000000', '제주도': '5000000000',
+  '강원도': '5100000000', '전북도': '5200000000',
+};
+
+async function handleRtChangeRateSido(req, res) {
+  const weeks = Math.min(Math.max(parseInt(req.query.weeks) || 1, 1), 10);
+  const data = await cached(`rt:cr:sido:kb:${weeks}`, 1_800_000, async () => {
+    const pool = getPool();
+    const { rows } = await pool.query(`
+      WITH unique_dates AS (
+        SELECT DISTINCT date FROM kb_price_index
+        WHERE parent_code IS NULL AND region_code != '0000000000'
+        ORDER BY date DESC
+      ),
+      ranked AS (
+        SELECT date, ROW_NUMBER() OVER (ORDER BY date DESC) AS rn FROM unique_dates
+      ),
+      curr AS (
+        SELECT region_code, region_name, price_index
+        FROM kb_price_index
+        WHERE parent_code IS NULL AND region_code != '0000000000'
+          AND date = (SELECT date FROM ranked WHERE rn = 1)
+      ),
+      prev AS (
+        SELECT region_code, price_index
+        FROM kb_price_index
+        WHERE parent_code IS NULL AND region_code != '0000000000'
+          AND date = (SELECT date FROM ranked WHERE rn = $1 + 1)
+      )
+      SELECT c.region_name AS kb_name,
+        c.price_index,
+        CASE WHEN COALESCE(p.price_index, 0) > 0
+          THEN round(((c.price_index - p.price_index) / p.price_index * 100)::numeric, 4)
+          ELSE 0
+        END AS change_rate
+      FROM curr c
+      LEFT JOIN prev p ON c.region_code = p.region_code
+      ORDER BY change_rate DESC NULLS LAST
+    `, [weeks]);
+    return rows.map(r => ({
+      sido_name: KB_TO_DB_CITY[r.kb_name] || r.kb_name,
+      price_index: parseFloat(r.price_index),
+      change_rate: parseFloat(r.change_rate || 0),
+      kb_name: r.kb_name,
+    }));
+  });
+  res.json(data);
+}
+
+async function handleRtChangeRateSigungu(req, res) {
+  const { sido } = req.query;
+  if (!sido) return res.status(400).json({ error: 'sido required' });
+  const weeks = Math.min(Math.max(parseInt(req.query.weeks) || 1, 1), 10);
+
+  const kbSidoCode = DB_CITY_TO_KB_CODE[sido];
+  if (!kbSidoCode) return res.json([]);
+
+  const data = await cached(`rt:cr:sgg:kb:${sido}:${weeks}`, 900_000, async () => {
+    const pool = getPool();
+    const { rows } = await pool.query(`
+      WITH unique_dates AS (
+        SELECT DISTINCT date FROM kb_price_index WHERE parent_code = $1
+        ORDER BY date DESC
+      ),
+      ranked AS (
+        SELECT date, ROW_NUMBER() OVER (ORDER BY date DESC) AS rn FROM unique_dates
+      ),
+      curr AS (
+        SELECT region_code, region_name, price_index
+        FROM kb_price_index
+        WHERE parent_code = $1 AND date = (SELECT date FROM ranked WHERE rn = 1)
+      ),
+      prev AS (
+        SELECT region_code, price_index
+        FROM kb_price_index
+        WHERE parent_code = $1
+          AND date = (SELECT date FROM ranked WHERE rn = $2 + 1)
+      )
+      SELECT c.region_name AS sgg_name,
+        c.price_index,
+        CASE WHEN COALESCE(p.price_index, 0) > 0
+          THEN round(((c.price_index - p.price_index) / p.price_index * 100)::numeric, 4)
+          ELSE 0
+        END AS change_rate
+      FROM curr c
+      LEFT JOIN prev p ON c.region_code = p.region_code
+      ORDER BY change_rate DESC NULLS LAST
+    `, [kbSidoCode, weeks]);
+    return rows.map(r => ({
+      sgg_name: r.sgg_name,
+      price_index: parseFloat(r.price_index),
+      change_rate: parseFloat(r.change_rate || 0),
+    }));
+  });
+  res.json(data);
+}
+
+async function handleRtChangeRateComplex(req, res) {
+  const { division, city } = req.query;
+  if (!division) return res.status(400).json({ error: 'division required' });
+  const period = req.query.period || '1m';
+  const pt = req.query.property_type || '';
+  const days = PERIOD_DAYS[period] || 30;
+  const limit = Math.min(parseInt(req.query.limit) || 100, 200);
+
+  const data = await cached(`rt:cr:cmplx:${division}:${city||''}:${period}:${pt}`, 600_000, async () => {
+    const pool = getPool();
+    const ptFilter = (pt === 'APT' || pt === 'OPST') ? `AND c.property_type = '${pt}'` : '';
+    const dc = divisionCondition(division, city, city ? 2 : 1);
+    const params = city ? [city, ...dc.params, limit] : [...dc.params, limit];
+
+    // 평당가 중위값 기반 비교 (구성 효과 제거)
+    const { rows } = await pool.query(`
+      WITH current_p AS (
+        SELECT c.id AS complex_id, c.complex_name, c.lat, c.lon,
+          percentile_cont(0.5) WITHIN GROUP (ORDER BY rt.deal_amount / NULLIF(rt.exclu_use_ar, 0) * 3.3058) AS median_pp,
+          count(*)::int AS tx_count,
+          max(make_date(rt.deal_year, rt.deal_month, COALESCE(NULLIF(rt.deal_day,0), 1))) AS latest_deal_date,
+          avg(rt.deal_amount)::bigint AS avg_price
+        FROM real_transactions rt
+        JOIN complexes c ON rt.complex_id = c.id
+        WHERE c.is_active = true
+          ${city ? 'AND c.city = $1' : ''}
+          AND ${dc.clause}
+          AND rt.complex_id IS NOT NULL
+          AND ${CANCEL_FILTER}
+          AND make_date(rt.deal_year, rt.deal_month, COALESCE(NULLIF(rt.deal_day,0), 1))
+              >= CURRENT_DATE - INTERVAL '${days} days'
+          ${ptFilter}
+        GROUP BY c.id, c.complex_name, c.lat, c.lon
+      ),
+      prev_p AS (
+        SELECT c.id AS complex_id,
+          percentile_cont(0.5) WITHIN GROUP (ORDER BY rt.deal_amount / NULLIF(rt.exclu_use_ar, 0) * 3.3058) AS median_pp,
+          count(*)::int AS tx_count,
+          avg(rt.deal_amount)::bigint AS avg_price
+        FROM real_transactions rt
+        JOIN complexes c ON rt.complex_id = c.id
+        WHERE c.is_active = true
+          ${city ? 'AND c.city = $1' : ''}
+          AND ${dc.clause}
+          AND rt.complex_id IS NOT NULL
+          AND ${CANCEL_FILTER}
+          AND make_date(rt.deal_year, rt.deal_month, COALESCE(NULLIF(rt.deal_day,0), 1))
+              >= CURRENT_DATE - INTERVAL '${days * 2} days'
+          AND make_date(rt.deal_year, rt.deal_month, COALESCE(NULLIF(rt.deal_day,0), 1))
+              < CURRENT_DATE - INTERVAL '${days} days'
+          ${ptFilter}
+        GROUP BY c.id
+      )
+      SELECT cp.complex_id, cp.complex_name, cp.lat, cp.lon,
+        cp.avg_price AS avg_current,
+        pp.avg_price AS avg_prev,
+        cp.tx_count AS tx_count_current,
+        COALESCE(pp.tx_count, 0) AS tx_count_prev,
+        (cp.avg_price - COALESCE(pp.avg_price, cp.avg_price))::bigint AS change_amount,
+        CASE WHEN COALESCE(pp.median_pp, 0) > 0
+          THEN round(((cp.median_pp - pp.median_pp) / pp.median_pp * 100)::numeric, 2)
+          ELSE 0
+        END AS change_rate,
+        cp.latest_deal_date
+      FROM current_p cp
+      LEFT JOIN prev_p pp ON cp.complex_id = pp.complex_id
+      WHERE cp.lat IS NOT NULL AND cp.lon IS NOT NULL
+      ORDER BY cp.tx_count DESC
+      LIMIT $${dc.nextIdx}
+    `, params);
+    return rows;
+  });
+  res.json(data);
+}
+
+async function handleRtWeekly(req, res) {
+  const sido = req.query.sido || null;
+  const limit = Math.min(parseInt(req.query.limit) || 20, 50);
+
+  const cacheKey = `rt:weekly:${sido || 'all'}`;
+  const data = await cached(cacheKey, 600_000, async () => {
+    const pool = getPool();
+    const where = [
+      CANCEL_FILTER,
+      `rt.complex_id IS NOT NULL`,
+      `make_date(rt.deal_year, rt.deal_month, COALESCE(NULLIF(rt.deal_day,0), 1)) >= CURRENT_DATE - INTERVAL '7 days'`,
+    ];
+    const params = [];
+    let idx = 1;
+    if (sido) {
+      where.push(`c.city = $${idx++}`);
+      params.push(sido);
+    }
+    params.push(limit);
+
+    const { rows } = await pool.query(`
+      SELECT rt.id, rt.apt_nm, rt.deal_amount, rt.exclu_use_ar, rt.floor,
+        rt.deal_year, rt.deal_month, rt.deal_day, rt.sgg_cd,
+        c.id AS complex_id, c.complex_name, c.city AS sido_name,
+        ${MERGED_DIVISION} AS division,
+        c.total_households,
+        round(rt.exclu_use_ar / 3.3058)::int AS pyeong,
+        (SELECT rt2.deal_amount FROM real_transactions rt2
+         WHERE rt2.complex_id = rt.complex_id
+           AND abs(rt2.exclu_use_ar - rt.exclu_use_ar) < 2
+           AND (rt2.cdeal_type IS NULL OR rt2.cdeal_type = '' OR rt2.cdeal_type != 'O')
+           AND (rt2.deal_year * 10000 + rt2.deal_month * 100 + COALESCE(rt2.deal_day,0))
+               < (rt.deal_year * 10000 + rt.deal_month * 100 + COALESCE(rt.deal_day,0))
+         ORDER BY rt2.deal_year DESC, rt2.deal_month DESC, rt2.deal_day DESC NULLS LAST
+         LIMIT 1) AS prev_deal_amount
+      FROM real_transactions rt
+      JOIN complexes c ON rt.complex_id = c.id
+      WHERE ${where.join(' AND ')}
+      ORDER BY rt.deal_year DESC, rt.deal_month DESC, rt.deal_day DESC NULLS LAST
+      LIMIT $${idx}
+    `, params);
+    return rows.map(r => ({
+      ...r,
+      price_diff: r.prev_deal_amount ? r.deal_amount - r.prev_deal_amount : null,
+    }));
+  });
+  res.json(data);
 }

@@ -69,6 +69,22 @@ export function sidoToCode(name: string): string | undefined {
   return undefined;
 }
 
+/** 실거래 변동률 색상 (KB 가격지수 기준: 주간 ±0.1~1% 범위) */
+export function changeRateColor(rate: number): string {
+  if (rate >= 0.5) return '#e02020';
+  if (rate >= 0.2) return '#ff6b6b';
+  if (rate > -0.2) return '#e8e8e8';
+  if (rate > -0.5) return '#74b9ff';
+  return '#0984e3';
+}
+
+/** 변동률 텍스트 색상 */
+export function changeRateTextColor(rate: number): string {
+  if (rate > 0) return '#e02020';
+  if (rate < 0) return '#0984e3';
+  return '#888';
+}
+
 /** 급매 비율에 따른 히트맵 색상 */
 export function bargainRatioColor(ratio: number | string): string {
   ratio = Number(ratio);

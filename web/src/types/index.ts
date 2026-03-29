@@ -477,3 +477,58 @@ export interface DongArticle {
   complex_id: number;
   hscp_no: string | null;
 }
+
+/* ── Real Transaction Change Rate ── */
+export type RtPeriod = '1w' | '2w' | '1m' | '3m' | '6m' | '1y';
+
+export interface RtSidoChangeRate {
+  sido_name: string;
+  avg_current: number;
+  avg_prev: number | null;
+  tx_count_current: number;
+  tx_count_prev: number;
+  change_rate: number;
+}
+
+export interface RtSigunguChangeRate {
+  sgg_name: string;
+  avg_current: number;
+  avg_prev: number | null;
+  tx_count_current: number;
+  tx_count_prev: number;
+  change_rate: number;
+}
+
+export interface RtComplexChangeRate {
+  complex_id: number;
+  complex_name: string;
+  lat: number | null;
+  lon: number | null;
+  avg_current: number;
+  avg_prev: number | null;
+  tx_count_current: number;
+  tx_count_prev: number;
+  change_amount: number;
+  change_rate: number;
+  latest_deal_date: string | null;
+}
+
+export interface RtWeeklyItem {
+  id: number;
+  apt_nm: string;
+  deal_amount: number;
+  exclu_use_ar: number;
+  floor: number | null;
+  deal_year: number;
+  deal_month: number;
+  deal_day: number | null;
+  sgg_cd: string;
+  complex_id: number | null;
+  complex_name: string | null;
+  sido_name: string | null;
+  division: string | null;
+  total_households: number | null;
+  pyeong: number;
+  prev_deal_amount: number | null;
+  price_diff: number | null;
+}

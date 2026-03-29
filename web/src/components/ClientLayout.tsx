@@ -1,22 +1,21 @@
 'use client';
 
-import { useAuth } from '@/components/AuthProvider';
-import { isTossWebView } from '@/lib/env';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 import TabBar from '@/components/TabBar';
+import HeaderMenu from '@/components/HeaderMenu';
 
 export default function ClientLayout({ children }: { children: React.ReactNode }) {
-  const { isLoggedIn } = useAuth();
-  const isToss = isTossWebView();
   const pathname = usePathname();
   const isStaticPage = ['/privacy', '/terms', '/about'].includes(pathname);
+  const isCallbackPage = pathname.startsWith('/auth/');
 
   return (
     <div className="mobile-frame">
+      {!isStaticPage && !isCallbackPage && <HeaderMenu />}
       {children}
-      {!isStaticPage && <Footer />}
-      <TabBar isLoggedIn={isLoggedIn} isToss={isToss} />
+      {!isStaticPage && !isCallbackPage && <Footer />}
+      {!isStaticPage && !isCallbackPage && <TabBar />}
     </div>
   );
 }

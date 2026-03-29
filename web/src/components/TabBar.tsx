@@ -3,22 +3,15 @@
 import { usePathname, useRouter } from 'next/navigation';
 
 const ALL_TABS = [
-  { path: '/', label: '홈', icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0v-6a1 1 0 011-1h2a1 1 0 011 1v6m-6 0h6' },
+  { path: '/', label: '급매', icon: 'M17.657 18.657A8 8 0 016.343 7.343S7 9 9 10c0-2 .5-5 2.986-7C14 5 16.09 5.777 17.656 7.343A7.975 7.975 0 0120 13a7.975 7.975 0 01-2.343 5.657z M9.879 16.121A3 3 0 1012.015 11L11 14H9c0 .768.293 1.536.879 2.121z' },
+  { path: '/real-transactions', label: '실거래', icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z' },
   { path: '/search', label: '검색', icon: 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z' },
   { path: '/community', label: '게시판', icon: 'M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z' },
-  { path: '/settings', label: '설정', icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z', authRequired: true },
 ];
 
-interface TabBarProps {
-  isLoggedIn: boolean;
-  isToss: boolean;
-}
-
-export default function TabBar({ isLoggedIn, isToss }: TabBarProps) {
+export default function TabBar() {
   const pathname = usePathname();
   const nav = useRouter();
-
-  const tabs = ALL_TABS;
 
   return (
     <nav className="fixed-bottom" style={{
@@ -36,8 +29,10 @@ export default function TabBar({ isLoggedIn, isToss }: TabBarProps) {
       display: 'flex',
       boxShadow: '0 -1px 8px rgba(0,0,0,0.04)',
     }}>
-      {tabs.map(tab => {
-        const isActive = tab.path === '/' ? pathname === '/' : pathname.startsWith(tab.path);
+      {ALL_TABS.map(tab => {
+        const isActive = tab.path === '/'
+          ? pathname === '/'
+          : pathname.startsWith(tab.path);
         return (
           <button key={tab.path}
             onClick={() => nav.push(tab.path)}

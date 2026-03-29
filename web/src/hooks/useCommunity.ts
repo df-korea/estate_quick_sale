@@ -14,6 +14,8 @@ export interface CommunityPost {
   comment_count: number;
   created_at: string;
   updated_at: string;
+  is_anonymous?: boolean;
+  anonymous_nickname?: string | null;
   attached_article: {
     id: number;
     deal_price: number;

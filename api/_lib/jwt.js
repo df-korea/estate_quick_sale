@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 
 const ALG = 'HS256';
-const EXPIRY_DAYS = 7;
+const DEFAULT_EXPIRY_DAYS = 7;
 
 function getSecret() {
   const secret = process.env.TOSS_AIT_API_KEY;
@@ -13,10 +13,10 @@ function base64url(buf) {
   return Buffer.from(buf).toString('base64url');
 }
 
-export function signJwt(payload) {
+export function signJwt(payload, expiryDays = DEFAULT_EXPIRY_DAYS) {
   const secret = getSecret();
   const header = base64url(JSON.stringify({ alg: ALG, typ: 'JWT' }));
-  const exp = Math.floor(Date.now() / 1000) + EXPIRY_DAYS * 86400;
+  const exp = Math.floor(Date.now() / 1000) + expiryDays * 86400;
   const body = base64url(JSON.stringify({ ...payload, exp }));
   const sig = crypto.createHmac('sha256', secret).update(`${header}.${body}`).digest('base64url');
   return `${header}.${body}.${sig}`;
